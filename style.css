@@ -193,16 +193,34 @@ body {
     overflow-wrap: anywhere;
 }
 .activity-console-line::before { content: '> '; color: #4ade80; }
+/* Mobile: .app-main is transparent to layout, the console sits between the tabs and the content. */
+.app-main { display: contents; }
+.tabs { order: 0; }
+.activity-console { order: 1; }
+.app-main > :not(.tabs) { order: 2; }
+/* Desktop: console in its own sticky column so it never overlaps the tabs or the card. */
 @media (min-width: 900px) {
     body {
-        padding-left: calc(clamp(360px, 30vw, 480px) + 32px);
+        display: grid;
+        grid-template-columns: clamp(360px, 30vw, 480px) minmax(0, 1fr);
+        column-gap: 32px;
+        align-items: start;
+    }
+    .app-main {
+        grid-column: 2;
+        grid-row: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-width: 0;
     }
     .activity-console {
-        position: fixed;
-        top: 88px;
-        left: 16px;
-        width: clamp(360px, 30vw, 480px);
-        height: min(68vh, 520px);
+        grid-column: 1;
+        grid-row: 1;
+        position: sticky;
+        top: 20px;
+        width: 100%;
+        height: min(calc(100vh - 40px), 520px);
         margin: 0;
         z-index: 20;
     }

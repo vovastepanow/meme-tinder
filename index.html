@@ -5,10 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Умная ИИ Мемо-Панель</title>
     <!-- Подключение внешних стилей оформления -->
-    <link rel="stylesheet" href="style.css?v=20261015-5">
+    <link rel="stylesheet" href="style.css?v=20261015-7">
 </head>
 <body>
 
+    <section id="meme-activity-ticker" class="activity-console" aria-label="Журнал приложения">
+        <div class="activity-console-header"><span class="console-indicator"></span><strong>Журнал приложения</strong><span id="activity-console-status">готово</span><button id="activity-console-follow" type="button" hidden>К концу ↓</button></div>
+        <div id="meme-activity-track" class="activity-console-output" role="log" aria-live="polite"></div>
+    </section>
+
+    <main class="app-main">
     <div class="tabs">
         <button class="tab-btn active" onclick="switchTab('meme-tab', this)">🗿 Оценка Мемов</button>
         <button class="tab-btn" onclick="switchTab('source-tab', this)">🔎 Подбор Источников</button>
@@ -16,10 +22,6 @@
         <button class="tab-btn" data-tab-id="database-tab" onclick="switchTab('database-tab', this)">🗄️ Базы данных</button>
     </div>
 
-    <section id="meme-activity-ticker" class="activity-console" aria-label="Журнал приложения">
-        <div class="activity-console-header"><span class="console-indicator"></span><strong>Журнал приложения</strong><span id="activity-console-status">готово</span><button id="activity-console-follow" type="button" hidden>К концу ↓</button></div>
-        <div id="meme-activity-track" class="activity-console-output" role="log" aria-live="polite"></div>
-    </section>
 
     <div id="debug-banner" class="debug-banner" style="display: none;">
         <span>ДЕМО-РЕЖИМ: Ollama не используется, данные не сохраняются в файлы проекта</span>
@@ -192,6 +194,8 @@
         </dialog>
     </div>
 
+    </main>
+
     <div id="image-viewer" class="image-viewer" role="dialog" aria-modal="true" aria-label="Просмотр изображения" hidden>
         <button id="image-viewer-close" class="image-viewer-close" type="button" aria-label="Закрыть просмотр">×</button>
         <img id="image-viewer-image" alt="" draggable="false">
@@ -199,6 +203,6 @@
     </div>
 
     <!-- Подключение изолированной JS-логики интерфейса -->
-    <script src="script.js?v=20261015-5"></script>
+    <script src="script.js?v=20261015-7"></script>
 </body>
 </html>
