@@ -129,7 +129,7 @@ function meme_parser_activity() {
     if (!is_array($lines)) return [];
 
     $activity = [];
-    foreach (array_slice($lines, -32) as $line) {
+    foreach (array_slice($lines, -80) as $line) {
         $line = trim(preg_replace('/\s+/u', ' ', $line) ?? $line);
         if ($line === '' || str_starts_with($line, 'PHP Warning:')) continue;
         if (function_exists('mb_strimwidth')) {
@@ -139,7 +139,7 @@ function meme_parser_activity() {
         }
         $activity[] = $line;
     }
-    return array_slice($activity, -24);
+    return array_slice($activity, -60);
 }
 
 function meme_parser_process_running($pid) {

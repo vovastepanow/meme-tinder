@@ -192,13 +192,35 @@ function resetMemeActivity() {
     parserActivityLines = [];
 }
 
+const AI_LOG_LINE_PATTERN = /^\[ИИ (→|←) ([^\]]+)\] ?([\s\S]*)$/;
+
+/** Lines from record_ai_exchange() become chat-style bubbles: prompt and reply, collapsed to 4 lines. */
+function renderAiConsoleEntry(entry, timestamp, direction, model, text) {
+    const isRequest = direction === '→';
+    entry.classList.add('ai-message', isRequest ? 'ai-request' : 'ai-response');
+    entry.title = 'Клик — развернуть или свернуть';
+    const meta = document.createElement('span');
+    meta.className = 'ai-message-meta';
+    meta.textContent = `${timestamp} · ${isRequest ? 'запрос →' : 'ответ ←'} ${model}`;
+    const body = document.createElement('span');
+    body.className = 'ai-message-text';
+    body.textContent = text;
+    entry.append(meta, body);
+    entry.addEventListener('click', () => entry.classList.toggle('is-expanded'));
+}
+
 function appendConsoleLine(message) {
     const track = document.getElementById('meme-activity-track');
     const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const entry = document.createElement('p');
     entry.className = 'activity-console-line';
-    entry.textContent = `${timestamp} ${message}`;
-    memeActivityLines.push(entry.textContent);
+    const aiExchange = AI_LOG_LINE_PATTERN.exec(message);
+    if (aiExchange) {
+        renderAiConsoleEntry(entry, timestamp, ...aiExchange.slice(1));
+    } else {
+        entry.textContent = `${timestamp} ${message}`;
+    }
+    memeActivityLines.push(`${timestamp} ${message}`);
     track.appendChild(entry);
 
     while (memeActivityLines.length > 200) {

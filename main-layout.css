@@ -94,6 +94,36 @@ body {
     overflow-wrap: anywhere;
 }
 .activity-console-line::before { content: '> '; color: #4ade80; }
+.activity-console-line.ai-message {
+    margin: 6px 0;
+    padding: 6px 8px;
+    border-left: 3px solid #a78bfa;
+    border-radius: 4px;
+    background: rgba(167, 139, 250, 0.1);
+    cursor: pointer;
+}
+.activity-console-line.ai-message::before { content: none; }
+.activity-console-line.ai-response {
+    border-left-color: #4ade80;
+    background: rgba(74, 222, 128, 0.08);
+}
+.ai-message-meta {
+    display: block;
+    margin-bottom: 2px;
+    color: #c4b5fd;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.ai-response .ai-message-meta { color: #86efac; }
+.ai-message-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    overflow: hidden;
+    color: #e4e4e7;
+}
+.ai-message.is-expanded .ai-message-text { display: block; }
 /* Mobile: .app-main is transparent to layout, the console sits between the tabs and the content. */
 .app-main { display: contents; }
 .tabs { order: 0; }
