@@ -12,82 +12,123 @@ let parserActivityLines = [];
 let consoleFollowsTail = true;
 const memeVisionPreviewCache = new Map();
 const DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === '1';
-let imageViewerScale = 1;
-let imageViewerDrag = null;
+const IMAGE_VIEWER_MAX_ZOOM = 5;
+const IMAGE_VIEWER_CLICK_TOLERANCE = 4;
+const imageViewerState = { zoom: 1, x: 0, y: 0, drag: null };
 
-function resizeImageViewer(factor = 1) {
-    const viewer = document.getElementById('image-viewer');
+function applyImageViewerTransform() {
     const image = document.getElementById('image-viewer-image');
-    if (!image.naturalWidth || !image.naturalHeight) return;
+    const { zoom, x, y } = imageViewerState;
+    image.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
+    image.classList.toggle('is-zoomed', zoom > 1);
+}
 
-    const maxWidth = Math.max(180, window.innerWidth - 32);
-    const maxHeight = Math.max(160, window.innerHeight - 96);
-    const maxScale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
-    const minScale = Math.min(maxScale, 0.15);
-    imageViewerScale = Math.max(minScale, Math.min(maxScale, imageViewerScale * factor));
+/** Keeps the zoomed image from being dragged completely out of the viewport. */
+function clampImageViewerOffset() {
+    const image = document.getElementById('image-viewer-image');
+    const maxX = Math.max(0, (image.offsetWidth * imageViewerState.zoom - window.innerWidth) / 2 + window.innerWidth * 0.25);
+    const maxY = Math.max(0, (image.offsetHeight * imageViewerState.zoom - window.innerHeight) / 2 + window.innerHeight * 0.25);
+    imageViewerState.x = Math.max(-maxX, Math.min(maxX, imageViewerState.x));
+    imageViewerState.y = Math.max(-maxY, Math.min(maxY, imageViewerState.y));
+}
 
-    const width = Math.round(image.naturalWidth * imageViewerScale);
-    const height = Math.round(image.naturalHeight * imageViewerScale);
-    const previous = viewer.getBoundingClientRect();
-    viewer.style.width = `${width + 16}px`;
-    image.style.width = `${width}px`;
-    image.style.height = `${height}px`;
-
-    const left = previous.width ? previous.left + (previous.width - width - 16) / 2 : (window.innerWidth - width - 16) / 2;
-    const top = previous.height ? previous.top + (previous.height - height - 42) / 2 : (window.innerHeight - height - 42) / 2;
-    viewer.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 24, left))}px`;
-    viewer.style.top = `${Math.max(8, Math.min(window.innerHeight - height - 50, top))}px`;
+function zoomImageViewer(factor, clientX, clientY) {
+    const previousZoom = imageViewerState.zoom;
+    const zoom = Math.max(1, Math.min(IMAGE_VIEWER_MAX_ZOOM, previousZoom * factor));
+    if (zoom === previousZoom) return;
+    // Zoom around the cursor: the point under the pointer stays in place.
+    const pointX = clientX - window.innerWidth / 2;
+    const pointY = clientY - window.innerHeight / 2;
+    const ratio = zoom / previousZoom;
+    imageViewerState.x = pointX - (pointX - imageViewerState.x) * ratio;
+    imageViewerState.y = pointY - (pointY - imageViewerState.y) * ratio;
+    imageViewerState.zoom = zoom;
+    if (zoom === 1) {
+        imageViewerState.x = 0;
+        imageViewerState.y = 0;
+    }
+    clampImageViewerOffset();
+    applyImageViewerTransform();
 }
 
 function openImageViewer(source, altText) {
     const viewer = document.getElementById('image-viewer');
     const image = document.getElementById('image-viewer-image');
-    document.getElementById('image-viewer-title').textContent = altText || 'Просмотр изображения';
-    imageViewerScale = 1;
-    image.onload = () => resizeImageViewer();
+    Object.assign(imageViewerState, { zoom: 1, x: 0, y: 0, drag: null });
+    image.alt = altText || 'Просмотр изображения';
     image.src = source;
+    applyImageViewerTransform();
     viewer.hidden = false;
-    if (image.complete) resizeImageViewer();
+    document.body.classList.add('image-viewer-open');
 }
 
 function closeImageViewer() {
-    document.getElementById('image-viewer').hidden = true;
+    const viewer = document.getElementById('image-viewer');
+    viewer.hidden = true;
+    viewer.classList.remove('is-dragging');
     document.getElementById('image-viewer-image').removeAttribute('src');
+    document.body.classList.remove('image-viewer-open');
+    imageViewerState.drag = null;
 }
 
 function initializeImageViewer() {
     const viewer = document.getElementById('image-viewer');
-    const header = document.getElementById('image-viewer-header');
     const image = document.getElementById('image-viewer-image');
 
     document.addEventListener('click', event => {
         const target = event.target.closest('img');
         if (!target || target === image || (!target.currentSrc && !target.src)) return;
+        event.preventDefault();
         openImageViewer(target.currentSrc || target.src, target.alt);
     });
-    document.getElementById('image-viewer-close').addEventListener('click', closeImageViewer);
+    document.getElementById('image-viewer-close').addEventListener('click', event => {
+        event.stopPropagation();
+        closeImageViewer();
+    });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && !viewer.hidden) closeImageViewer();
     });
     viewer.addEventListener('wheel', event => {
         event.preventDefault();
-        resizeImageViewer(event.deltaY < 0 ? 1.12 : 0.89);
+        zoomImageViewer(event.deltaY < 0 ? 1.2 : 1 / 1.2, event.clientX, event.clientY);
     }, { passive: false });
 
-    header.addEventListener('pointerdown', event => {
-        if (event.target.closest('button')) return;
-        const bounds = viewer.getBoundingClientRect();
-        imageViewerDrag = { pointerId: event.pointerId, offsetX: event.clientX - bounds.left, offsetY: event.clientY - bounds.top };
-        header.setPointerCapture(event.pointerId);
+    viewer.addEventListener('pointerdown', event => {
+        if (event.button !== 0 || event.target.closest('button')) return;
+        imageViewerState.drag = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            originX: imageViewerState.x,
+            originY: imageViewerState.y,
+            moved: false
+        };
+        viewer.setPointerCapture(event.pointerId);
     });
-    header.addEventListener('pointermove', event => {
-        if (!imageViewerDrag || imageViewerDrag.pointerId !== event.pointerId) return;
-        viewer.style.left = `${Math.max(0, Math.min(window.innerWidth - viewer.offsetWidth, event.clientX - imageViewerDrag.offsetX))}px`;
-        viewer.style.top = `${Math.max(0, Math.min(window.innerHeight - 36, event.clientY - imageViewerDrag.offsetY))}px`;
+    viewer.addEventListener('pointermove', event => {
+        const drag = imageViewerState.drag;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        const dx = event.clientX - drag.startX;
+        const dy = event.clientY - drag.startY;
+        if (!drag.moved && Math.hypot(dx, dy) < IMAGE_VIEWER_CLICK_TOLERANCE) return;
+        drag.moved = true;
+        viewer.classList.add('is-dragging');
+        imageViewerState.x = drag.originX + dx;
+        imageViewerState.y = drag.originY + dy;
+        clampImageViewerOffset();
+        applyImageViewerTransform();
     });
-    const stopDragging = () => { imageViewerDrag = null; };
-    header.addEventListener('pointerup', stopDragging);
-    header.addEventListener('pointercancel', stopDragging);
+    viewer.addEventListener('pointerup', event => {
+        const drag = imageViewerState.drag;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        imageViewerState.drag = null;
+        viewer.classList.remove('is-dragging');
+        if (!drag.moved) closeImageViewer();
+    });
+    viewer.addEventListener('pointercancel', () => {
+        imageViewerState.drag = null;
+        viewer.classList.remove('is-dragging');
+    });
 }
 
 function apiUrl(action) {

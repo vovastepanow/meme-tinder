@@ -209,51 +209,60 @@ body {
 }
 .image-viewer {
     position: fixed;
+    inset: 0;
     z-index: 1000;
-    display: grid;
-    grid-template-rows: 36px auto;
-    max-width: calc(100vw - 16px);
-    max-height: calc(100vh - 16px);
-    box-sizing: border-box;
-    overflow: hidden;
-    border: 1px solid #66756e;
-    border-radius: 6px;
-    background: #111714;
-    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.72);
-}
-.image-viewer[hidden] { display: none; }
-.image-viewer-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    min-width: 0;
-    padding: 0 8px 0 12px;
-    border-bottom: 1px solid #3c4943;
-    background: #202923;
-    color: #e4e4e7;
-    font-size: 12px;
-    cursor: grab;
+    justify-content: center;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.88);
+    cursor: zoom-out;
     touch-action: none;
     user-select: none;
 }
-.image-viewer-header:active { cursor: grabbing; }
-.image-viewer-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.image-viewer[hidden] { display: none; }
+.image-viewer.is-dragging { cursor: grabbing; }
+.image-viewer img {
+    display: block;
+    max-width: calc(100vw - 48px);
+    max-height: calc(100vh - 72px);
+    object-fit: contain;
+    transform-origin: center center;
+    transition: transform 0.08s ease-out;
+    will-change: transform;
+}
+.image-viewer img.is-zoomed { cursor: grab; }
+.image-viewer.is-dragging img { cursor: grabbing; transition: none; }
 .image-viewer-close {
-    flex: 0 0 auto;
-    width: 28px;
-    height: 28px;
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
-    color: #e4e4e7;
-    font-size: 21px;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 1;
+    width: 40px;
+    height: 40px;
+    border: 1px solid #3f3f46;
+    border-radius: 50%;
+    background: rgba(24, 24, 27, 0.85);
+    color: #f4f4f5;
+    font-size: 24px;
     line-height: 1;
     cursor: pointer;
 }
 .image-viewer-close:hover { background: #7f1d1d; }
-.image-viewer-viewport { max-width: 100%; max-height: calc(100vh - 54px); overflow: auto; padding: 8px; }
-.image-viewer-viewport img { display: block; max-width: none; max-height: none; object-fit: contain; cursor: default; }
+.image-viewer-hint {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: rgba(24, 24, 27, 0.75);
+    color: #a1a1aa;
+    font-size: 12px;
+    white-space: nowrap;
+    pointer-events: none;
+}
+body.image-viewer-open { overflow: hidden; }
 img:not(#image-viewer-image) { cursor: zoom-in; }
 .test-panel {
     max-width: 680px;
