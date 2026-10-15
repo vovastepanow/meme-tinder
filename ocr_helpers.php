@@ -4,6 +4,29 @@ function ocr_text_length($value) {
     return function_exists('mb_strlen') ? mb_strlen($value, 'UTF-8') : strlen($value);
 }
 
+/** Intersection area divided by the area of the smaller box (0 when either box is empty). */
+function ocr_box_overlap_ratio($first, $second) {
+    $intersection_width = max(0, min($first['left'] + $first['width'], $second['left'] + $second['width']) - max($first['left'], $second['left']));
+    $intersection_height = max(0, min($first['top'] + $first['height'], $second['top'] + $second['height']) - max($first['top'], $second['top']));
+    $smaller_area = min($first['width'] * $first['height'], $second['width'] * $second['height']);
+    return $smaller_area > 0 ? $intersection_width * $intersection_height / $smaller_area : 0;
+}
+
+function ocr_box_label($region) {
+    return $region['left'] . ',' . $region['top'] . ' ' . $region['width'] . 'x' . $region['height'];
+}
+
+function run_tesseract_pass($image_file, $page_mode, $coordinate_scale = 1.0) {
+    $lines = [];
+    exec('tesseract ' . escapeshellarg($image_file) . ' stdout -l rus+eng --psm ' . $page_mode . ' tsv 2>/dev/null', $lines, $status);
+    $candidate = $status === 0
+        ? select_tesseract_tsv_candidate($lines, $coordinate_scale)
+        : select_tesseract_tsv_candidate([]);
+    $candidate['psm'] = $page_mode;
+    $candidate['scale'] = $coordinate_scale;
+    return $candidate;
+}
+
 function select_tesseract_tsv_candidate($lines, $coordinate_scale = 1.0) {
     $tokens = [];
     $rejected_tokens = [];
@@ -46,11 +69,7 @@ function select_tesseract_tsv_candidate($lines, $coordinate_scale = 1.0) {
     foreach ($tokens as $token) {
         $duplicate = false;
         foreach ($unique_tokens as $saved) {
-            $intersection_width = max(0, min($token['left'] + $token['width'], $saved['left'] + $saved['width']) - max($token['left'], $saved['left']));
-            $intersection_height = max(0, min($token['top'] + $token['height'], $saved['top'] + $saved['height']) - max($token['top'], $saved['top']));
-            $intersection = $intersection_width * $intersection_height;
-            $smaller_area = min($token['width'] * $token['height'], $saved['width'] * $saved['height']);
-            if ($smaller_area > 0 && $intersection / $smaller_area >= 0.55) {
+            if (ocr_box_overlap_ratio($token, $saved) >= 0.55) {
                 $duplicate = true;
                 break;
             }
@@ -149,11 +168,7 @@ function select_consensus_tesseract_candidate($candidates) {
                     && abs((float)($candidate['scale'] ?? 1) - (float)($other['scale'] ?? 1)) < 0.01;
                 if ($same_pass) continue;
                 foreach ($other['regions'] as $other_region) {
-                    $intersection_width = max(0, min($region['left'] + $region['width'], $other_region['left'] + $other_region['width']) - max($region['left'], $other_region['left']));
-                    $intersection_height = max(0, min($region['top'] + $region['height'], $other_region['top'] + $other_region['height']) - max($region['top'], $other_region['top']));
-                    $intersection = $intersection_width * $intersection_height;
-                    $smaller_area = min($region['width'] * $region['height'], $other_region['width'] * $other_region['height']);
-                    if ($smaller_area > 0 && $intersection / $smaller_area >= 0.2) {
+                    if (ocr_box_overlap_ratio($region, $other_region) >= 0.2) {
                         $confirmed = true;
                         break 2;
                     }
@@ -185,4 +200,84 @@ function select_consensus_tesseract_candidate($candidates) {
     $best['quality'] = 0;
     $best['consensus_confirmed'] = false;
     return $best;
+}
+/** Writes an upscaled grayscale copy of small images to a temp file; returns [file, scale] or null. */
+function prepare_upscaled_ocr_image($image_data, $image_info) {
+    if (!$image_info || max($image_info[0], $image_info[1]) > 1800 || !function_exists('imagecreatefromstring')) return null;
+    $source = @imagecreatefromstring($image_data);
+    if (!$source) return null;
+    $result = null;
+    $scale = min(2, 1800 / max($image_info[0], $image_info[1]));
+    if ($scale > 1.05) {
+        $width = (int)round($image_info[0] * $scale);
+        $height = (int)round($image_info[1] * $scale);
+        $prepared = imagecreatetruecolor($width, $height);
+        imagecopyresampled($prepared, $source, 0, 0, 0, 0, $width, $height, $image_info[0], $image_info[1]);
+        imagefilter($prepared, IMG_FILTER_GRAYSCALE);
+        imagefilter($prepared, IMG_FILTER_CONTRAST, -15);
+        $prepared_file = tempnam(sys_get_temp_dir(), 'meme_ocr_');
+        if ($prepared_file !== false && imagepng($prepared, $prepared_file)) {
+            $result = [$prepared_file, $scale];
+        }
+        imagedestroy($prepared);
+    }
+    imagedestroy($source);
+    return $result;
+}
+
+/**
+ * Applies $paint to every padded OCR region and returns the PNG-encoded result.
+ * $create_painter receives the GD image and returns fn($image, $left, $top, $right, $bottom).
+ */
+function paint_ocr_regions($image_data, $regions, $padding_ratio, $min_padding, $max_padding, callable $create_painter) {
+    if (!$regions || !function_exists('imagecreatefromstring') || !function_exists('imagefilter')) return $image_data;
+    $image = @imagecreatefromstring($image_data);
+    if (!$image) return $image_data;
+    $image_width = imagesx($image);
+    $image_height = imagesy($image);
+    $padding = max($min_padding, min($max_padding, (int)(min($image_width, $image_height) * $padding_ratio)));
+    $paint = $create_painter($image);
+
+    foreach ($regions as $region) {
+        $left = max(0, $region['left'] - $padding);
+        $top = max(0, $region['top'] - $padding);
+        $right = min($image_width, $region['left'] + $region['width'] + $padding);
+        $bottom = min($image_height, $region['top'] + $region['height'] + $padding);
+        if ($right - $left < 1 || $bottom - $top < 1) continue;
+        $paint($image, $left, $top, $right, $bottom);
+    }
+
+    ob_start();
+    imagepng($image);
+    $painted_image = ob_get_clean();
+    imagedestroy($image);
+    return $painted_image !== false && $painted_image !== '' ? $painted_image : $image_data;
+}
+
+/** Covers OCR regions with dark boxes and orange outlines (interactive analysis). */
+function mask_ocr_regions($image_data, $regions) {
+    return paint_ocr_regions($image_data, $regions, 0.01, 4, 12, function($image) {
+        $mask_color = imagecolorallocate($image, 8, 8, 8);
+        $outline_color = imagecolorallocate($image, 255, 145, 40);
+        return function($image, $left, $top, $right, $bottom) use ($mask_color, $outline_color) {
+            imagefilledrectangle($image, $left, $top, $right - 1, $bottom - 1, $mask_color);
+            imagerectangle($image, $left, $top, $right - 1, $bottom - 1, $outline_color);
+        };
+    });
+}
+
+/** Gaussian-blurs OCR regions (background parser). */
+function blur_ocr_regions($image_data, $regions) {
+    return paint_ocr_regions($image_data, $regions, 0.02, 8, 24, function() {
+        return function($image, $left, $top, $right, $bottom) {
+            $width = $right - $left;
+            $height = $bottom - $top;
+            $crop = imagecreatetruecolor($width, $height);
+            imagecopy($crop, $image, 0, 0, $left, $top, $width, $height);
+            imagefilter($crop, IMG_FILTER_GAUSSIAN_BLUR);
+            imagefilter($crop, IMG_FILTER_GAUSSIAN_BLUR);
+            imagecopy($image, $crop, $left, $top, 0, 0, $width, $height);
+            imagedestroy($crop);
+        };
+    });
 }

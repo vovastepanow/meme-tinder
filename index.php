@@ -1,11 +1,14 @@
 <?php
-// index.php
-$pool_file = __DIR__ . '/memes_pool.json';
-$history_file = __DIR__ . '/meme_history.json';
-$sources_file = __DIR__ . '/sources_db.json';
-require_once __DIR__ . '/source_adapters.php';
+// index.php — JSON API for the frontend (index.html / script.js).
+require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/project_storage.php';
+require_once __DIR__ . '/http_client.php';
+require_once __DIR__ . '/source_adapters.php';
 require_once __DIR__ . '/ocr_helpers.php';
+require_once __DIR__ . '/image_input.php';
+require_once __DIR__ . '/meme_analysis.php';
+
+// ---- Demo mode and default data ----
 
 function debug_image($title, $background, $accent) {
     $title = htmlspecialchars($title, ENT_QUOTES | ENT_XML1, 'UTF-8');
@@ -19,7 +22,7 @@ function debug_initial_state() {
             ['image' => debug_image('ПОНЕДЕЛЬНИК', '#176b87', '#e95d3f'), 'text' => 'План на утро: стать продуктивным. Факт: уже обед.', 'ai_description' => 'Человек строит амбициозные планы, пока время незаметно уходит.', 'rating' => 91, 'source' => 'Демо-сообщество'],
             ['image' => debug_image('ОЖИДАНИЕ / РЕАЛЬНОСТЬ', '#58734b', '#f1c453'), 'text' => 'Открыл одну вкладку. Через час их уже двадцать семь.', 'ai_description' => 'Шутка о привычке отвлекаться в интернете.', 'rating' => 76, 'source' => 'Локальный тест']
         ],
-        'history' => ['liked_memes' => [], 'disliked_memes' => [], 'undecided_memes' => [], 'wrong_topic_memes' => []],
+        'history' => empty_history(),
         'source_index' => 0,
         'source_votes' => []
     ];
@@ -75,24 +78,22 @@ function create_default_source_catalog() {
 }
 
 function ensure_default_project_data() {
-    global $pool_file, $history_file, $sources_file;
-
-    if (!is_file($history_file)) {
-        save_data($history_file, ['liked_memes' => [], 'disliked_memes' => [], 'undecided_memes' => [], 'wrong_topic_memes' => []]);
+    if (!is_file(HISTORY_FILE)) {
+        save_data(HISTORY_FILE, empty_history());
     }
 
-    if (!is_file($sources_file)) {
-        save_data($sources_file, create_default_source_catalog());
+    if (!is_file(SOURCES_FILE)) {
+        save_data(SOURCES_FILE, create_default_source_catalog());
     } else {
-        $source_db = load_data($sources_file, create_default_source_catalog());
+        $source_db = load_data(SOURCES_FILE, create_default_source_catalog());
         $normalized = normalize_source_db($source_db);
         if ($source_db !== $normalized) {
-            save_data($sources_file, $normalized);
+            save_data(SOURCES_FILE, $normalized);
         }
     }
 
-    if (!is_file($pool_file)) {
-        save_data($pool_file, create_demo_pool());
+    if (!is_file(POOL_FILE)) {
+        save_data(POOL_FILE, create_demo_pool());
     }
 }
 
@@ -121,69 +122,10 @@ function source_vote_exists($db, $source_id) {
     return false;
 }
 
-function fetch_2ch_json($board, $thread_id = null) {
-    if (!preg_match('/^[a-z0-9_-]{1,30}$/i', (string)$board)) return [];
-    if ($thread_id !== null && !preg_match('/^[0-9]{1,20}$/', (string)$thread_id)) return [];
-    $url = $thread_id === null
-        ? 'https://2ch.hk/' . rawurlencode($board) . '/catalog.json'
-        : 'https://2ch.hk/' . rawurlencode($board) . '/res/' . rawurlencode($thread_id) . '.json';
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 3,
-        CURLOPT_TIMEOUT => 8,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS => 2,
-        CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-        CURLOPT_USERAGENT => 'MemeTinder/1.0'
-    ]);
-    $response = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    if ($response === false || $status < 200 || $status >= 300) return [];
-    $data = json_decode($response, true);
-    return is_array($data) ? $data : [];
-}
-
-function build_source_preview_posts($source, $count = 4) {
-    if (($source['platform'] ?? '') === 'Telegram') return build_telegram_preview_posts($source, $count);
-    if (($source['platform'] ?? '') === 'ВКонтакте') return build_vk_preview_posts($source, $count);
-    if (($source['platform'] ?? '') !== 'Двач') return [];
-    $board = $source['board'] ?? '';
-    $thread_id = $source['thread_id'] ?? '';
-    $thread_data = fetch_2ch_json($board, $thread_id);
-    $thread = $thread_data['threads'][0] ?? null;
-    if (!is_array($thread) || empty($thread['posts']) || !is_array($thread['posts'])) return [];
-
-    $posts = [];
-    foreach ($thread['posts'] as $post) {
-        if (count($posts) >= $count) break;
-        $images = [];
-        foreach (($post['files'] ?? []) as $file) {
-            $path = $file['path'] ?? '';
-            $pattern = '#^/' . preg_quote($board, '#') . '/src/[0-9]+/[^/]+\.(?:jpe?g|png|gif|webp)$#i';
-            if (preg_match($pattern, $path)) $images[] = 'https://2ch.hk' . $path;
-            if (count($images) >= 4) break;
-        }
-        $raw_text = $post['comment'] ?? $post['subject'] ?? '';
-        $text = html_entity_decode(strip_tags((string)$raw_text), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        $text = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
-        if (!$images) continue;
-        $posts[] = [
-            'image' => $images[0],
-            'images' => $images,
-            'text' => $text ?: 'Пост без текста',
-            'source' => $source['name'],
-            'post_id' => $post['num'] ?? ''
-        ];
-    }
-    return $posts;
-}
+// ---- Background parser ----
 
 function meme_parser_activity() {
-    $key = substr(hash('sha256', __DIR__), 0, 16);
-    $log_file = __DIR__ . '/.meme-tinder-' . $key . '.log';
-    $lines = @file($log_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    $lines = @file(parser_runtime_file('.log'), FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     if (!is_array($lines)) return [];
 
     $activity = [];
@@ -204,311 +146,41 @@ function meme_parser_process_running($pid) {
     if ($pid < 1) return false;
     $command_line = @file_get_contents('/proc/' . $pid . '/cmdline');
     if ($command_line !== false) {
-        return strpos(str_replace("\0", ' ', $command_line), __DIR__ . '/cron_parser.php') !== false;
+        return strpos(str_replace("\0", ' ', $command_line), PARSER_SCRIPT) !== false;
     }
     return function_exists('posix_kill') && @posix_kill($pid, 0);
 }
 
 function start_meme_parser_if_needed($force = false) {
     if (!function_exists('exec')) return 'unavailable';
-    $key = substr(hash('sha256', __DIR__), 0, 16);
-    $state_file = __DIR__ . '/.meme-tinder-' . $key . '.json';
+    $state_file = parser_runtime_file('.json');
     $lock_handle = @fopen($state_file . '.lock', 'c+');
     if (!$lock_handle || !flock($lock_handle, LOCK_EX)) return 'unavailable';
+    try {
+        return launch_meme_parser_locked($state_file, $force);
+    } finally {
+        flock($lock_handle, LOCK_UN);
+        fclose($lock_handle);
+    }
+}
 
+function launch_meme_parser_locked($state_file, $force) {
     $state = json_decode(@file_get_contents($state_file), true) ?: [];
-    $pid = (int)($state['pid'] ?? 0);
-    if (meme_parser_process_running($pid)) {
-        flock($lock_handle, LOCK_UN);
-        fclose($lock_handle);
-        return 'running';
-    }
-    if (!$force && !empty($state['started_at']) && time() - (int)$state['started_at'] < 600) {
-        flock($lock_handle, LOCK_UN);
-        fclose($lock_handle);
-        return 'cooldown';
-    }
+    if (meme_parser_process_running((int)($state['pid'] ?? 0))) return 'running';
+    if (!$force && !empty($state['started_at']) && time() - (int)$state['started_at'] < 600) return 'cooldown';
 
-    $log_file = __DIR__ . '/.meme-tinder-' . $key . '.log';
     $php_binary = PHP_BINARY;
     if ($php_binary === '' || !is_executable($php_binary)) $php_binary = '/usr/bin/php';
-    if (!is_executable($php_binary)) {
-        flock($lock_handle, LOCK_UN);
-        fclose($lock_handle);
-        return 'unavailable';
-    }
-    $command = 'nohup ' . escapeshellarg($php_binary) . ' ' . escapeshellarg(__DIR__ . '/cron_parser.php') .
-        ' > ' . escapeshellarg($log_file) . ' 2>&1 < /dev/null & echo $!';
+    if (!is_executable($php_binary)) return 'unavailable';
+
+    $command = 'nohup ' . escapeshellarg($php_binary) . ' ' . escapeshellarg(PARSER_SCRIPT) .
+        ' > ' . escapeshellarg(parser_runtime_file('.log')) . ' 2>&1 < /dev/null & echo $!';
     exec($command, $output, $exit_code);
     $pid = (int)trim($output[0] ?? '0');
-    if ($exit_code !== 0 || $pid < 1) {
-        flock($lock_handle, LOCK_UN);
-        fclose($lock_handle);
-        return 'unavailable';
-    }
+    if ($exit_code !== 0 || $pid < 1) return 'unavailable';
 
     file_put_contents($state_file, json_encode(['pid' => $pid, 'started_at' => time()]), LOCK_EX);
-    flock($lock_handle, LOCK_UN);
-    fclose($lock_handle);
     return 'started';
-}
-
-function ai_generate_local($model, $prompt, $images = [], $format = null) {
-    $payload = ['model' => $model, 'prompt' => $prompt, 'stream' => false];
-    if ($images) $payload['images'] = $images;
-    if ($format) $payload['format'] = $format;
-
-    $ch = curl_init('http://localhost:11434/api/generate');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode($payload),
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT => 180
-    ]);
-    $response = curl_exec($ch);
-    $error = curl_error($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($response === false || $status < 200 || $status >= 300) {
-        $api_error = is_string($response) ? (json_decode($response, true)['error'] ?? '') : '';
-        throw new RuntimeException($api_error ?: ($error ?: 'Ошибка локальной Ollama (HTTP ' . $status . ').'));
-    }
-    $result = json_decode($response, true);
-    if (!is_array($result) || !isset($result['response'])) {
-        throw new RuntimeException('Модель вернула некорректный ответ.');
-    }
-    return trim($result['response']);
-}
-
-function validate_image_bytes($image_data) {
-    if (!is_string($image_data) || strlen($image_data) > 10 * 1024 * 1024) {
-        throw new RuntimeException('Изображение должно быть не больше 10 МБ.');
-    }
-    if (!function_exists('getimagesizefromstring')) {
-        throw new RuntimeException('На сервере недоступна проверка изображений (PHP GD).');
-    }
-    $image = @getimagesizefromstring($image_data);
-    $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
-    if (!$image || !in_array($image['mime'] ?? '', $allowed_types, true)) {
-        throw new RuntimeException('Поддерживаются только JPEG, PNG, GIF, WebP и BMP.');
-    }
-    if (($image[0] * $image[1]) > 40000000) {
-        throw new RuntimeException('Слишком большое разрешение изображения.');
-    }
-}
-
-function fetch_public_image($url) {
-    $parts = parse_url($url);
-    if (!$parts || !in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true) || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
-        throw new RuntimeException('Укажите прямую публичную ссылку на изображение.');
-    }
-    $host = rtrim(strtolower($parts['host']), '.');
-    $scheme = strtolower($parts['scheme']);
-    $port = $parts['port'] ?? ($scheme === 'https' ? 443 : 80);
-    if (!in_array($port, [80, 443], true) || ($scheme === 'https' && $port !== 443) || ($scheme === 'http' && $port !== 80)) {
-        throw new RuntimeException('Ссылка должна использовать стандартный порт HTTP или HTTPS.');
-    }
-
-    $resolve = [];
-    if (filter_var($host, FILTER_VALIDATE_IP)) {
-        if (!filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) || strpos($host, ':') !== false) {
-            throw new RuntimeException('Ссылка должна вести на публичный IPv4-адрес или домен.');
-        }
-    } else {
-        $addresses = gethostbynamel($host);
-        if (!$addresses) throw new RuntimeException('Не удалось найти адрес сайта из ссылки.');
-        foreach ($addresses as $address) {
-            if (!filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                throw new RuntimeException('Ссылка ведёт на непубличный адрес.');
-            }
-        }
-        $resolve[] = $host . ':' . $port . ':' . $addresses[0];
-    }
-
-    $image_data = '';
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => false,
-        CURLOPT_FOLLOWLOCATION => false,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT => 20,
-        CURLOPT_MAXREDIRS => 0,
-        CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_SSL_VERIFYHOST => 2,
-        CURLOPT_USERAGENT => 'MemeTinder/1.0',
-        CURLOPT_WRITEFUNCTION => function($curl, $chunk) use (&$image_data) {
-            if (strlen($image_data) + strlen($chunk) > 10 * 1024 * 1024) return 0;
-            $image_data .= $chunk;
-            return strlen($chunk);
-        }
-    ]);
-    if ($resolve) curl_setopt($ch, CURLOPT_RESOLVE, $resolve);
-    $success = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $content_type = strtolower(curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?: '');
-    $error = curl_error($ch);
-    curl_close($ch);
-
-    if ($success === false || $status < 200 || $status >= 300 || strpos($content_type, 'image/') !== 0) {
-        throw new RuntimeException($error ? 'Не удалось скачать изображение: ' . $error : 'Ссылка должна вести прямо на файл изображения, без страницы или редиректа.');
-    }
-    return $image_data;
-}
-
-function read_image_text_local($image_data, &$best_regions = null, $clean_text = true, &$ocr_meta = null) {
-    $best_regions = [];
-    $ocr_meta = ['status' => 'unavailable', 'text' => '', 'regions' => [], 'rejected' => []];
-    if (!function_exists('exec')) return '';
-    $input_file = tempnam(sys_get_temp_dir(), 'meme_test_');
-    if ($input_file === false) return '';
-    file_put_contents($input_file, $image_data);
-    $ocr_files = [$input_file];
-    $ocr_scales = [1.0];
-    $prepared_file = null;
-    $image_info = @getimagesizefromstring($image_data);
-    if ($image_info && max($image_info[0], $image_info[1]) <= 1800 && function_exists('imagecreatefromstring')) {
-        $source = @imagecreatefromstring($image_data);
-        if ($source) {
-            $scale = min(2, 1800 / max($image_info[0], $image_info[1]));
-            if ($scale > 1.05) {
-                $width = (int)round($image_info[0] * $scale);
-                $height = (int)round($image_info[1] * $scale);
-                $prepared = imagecreatetruecolor($width, $height);
-                imagecopyresampled($prepared, $source, 0, 0, 0, 0, $width, $height, $image_info[0], $image_info[1]);
-                imagefilter($prepared, IMG_FILTER_GRAYSCALE);
-                imagefilter($prepared, IMG_FILTER_CONTRAST, -15);
-                $prepared_file = tempnam(sys_get_temp_dir(), 'meme_ocr_');
-                if ($prepared_file !== false && imagepng($prepared, $prepared_file)) {
-                    $ocr_files[] = $prepared_file;
-                    $ocr_scales[] = $scale;
-                } else {
-                    $prepared_file = null;
-                }
-                imagedestroy($prepared);
-            }
-            imagedestroy($source);
-        }
-    }
-
-    $candidates = [];
-    foreach ($ocr_files as $ocr_index => $ocr_file) {
-        $coordinate_scale = $ocr_scales[$ocr_index] ?? 1.0;
-        foreach ([6, 11] as $page_mode) {
-            $lines = [];
-            exec('tesseract ' . escapeshellarg($ocr_file) . ' stdout -l rus+eng --psm ' . $page_mode . ' tsv 2>/dev/null', $lines, $status);
-            $candidate = $status === 0
-                ? select_tesseract_tsv_candidate($lines, $coordinate_scale)
-                : select_tesseract_tsv_candidate([]);
-            $candidate['psm'] = $page_mode;
-            $candidate['scale'] = $coordinate_scale;
-            $candidates[] = $candidate;
-        }
-    }
-
-    @unlink($input_file);
-    if ($prepared_file) @unlink($prepared_file);
-    $best = select_consensus_tesseract_candidate($candidates);
-    $best_regions = $best['regions'];
-    $ocr_meta = [
-        'status' => $best['word_count']
-            ? 'text-found'
-            : (!empty($best['raw_word_count']) && empty($best['consensus_confirmed']) ? 'unconfirmed' : 'no-text'),
-        'consensus_confirmed' => $best['consensus_confirmed'] ?? false,
-        'image_width' => (int)($image_info[0] ?? 0),
-        'image_height' => (int)($image_info[1] ?? 0),
-        'psm' => $best['psm'] ?? null,
-        'scale' => $best['scale'] ?? 1,
-        'raw_word_count' => $best['raw_word_count'],
-        'word_count' => $best['word_count'],
-        'line_count' => $best['line_count'],
-        'confidence' => $best['confidence'],
-        'text' => $best['text'],
-        'regions' => $best_regions,
-        'rejected' => $best['rejected']
-    ];
-    if (ocr_text_length($best['text']) < 3) return '';
-    if (!$clean_text) return $best['text'];
-    $cleaned = ai_generate_local('qwen2.5:3b', "Исправь очевидные ошибки OCR в короткой надписи. Сохрани язык и знаки препинания, не заменяй кириллицу латиницей. Не переводи и не добавляй слова. Удали только явные повторы; если фрагмент неразборчив, оставь как есть. Верни одну строку с исправленным текстом:\n" . $best['text']);
-    $ocr_meta['cleaned_text'] = $cleaned !== '' ? $cleaned : $best['text'];
-    return $ocr_meta['cleaned_text'];
-}
-
-function blur_ocr_regions_for_vision_local($image_data, $regions) {
-    if (!$regions || !function_exists('imagecreatefromstring') || !function_exists('imagefilter')) return $image_data;
-    $image = @imagecreatefromstring($image_data);
-    if (!$image) return $image_data;
-    $image_width = imagesx($image);
-    $image_height = imagesy($image);
-    $padding = max(4, min(12, (int)(min($image_width, $image_height) * 0.01)));
-    $mask_color = imagecolorallocate($image, 8, 8, 8);
-    $outline_color = imagecolorallocate($image, 255, 145, 40);
-
-    foreach ($regions as $region) {
-        $left = max(0, $region['left'] - $padding);
-        $top = max(0, $region['top'] - $padding);
-        $right = min($image_width, $region['left'] + $region['width'] + $padding);
-        $bottom = min($image_height, $region['top'] + $region['height'] + $padding);
-        $width = $right - $left;
-        $height = $bottom - $top;
-        if ($width < 1 || $height < 1) continue;
-
-        imagefilledrectangle($image, $left, $top, $right - 1, $bottom - 1, $mask_color);
-        imagerectangle($image, $left, $top, $right - 1, $bottom - 1, $outline_color);
-    }
-
-    ob_start();
-    imagepng($image);
-    $blurred_image = ob_get_clean();
-    imagedestroy($image);
-    return $blurred_image !== false && $blurred_image !== '' ? $blurred_image : $image_data;
-}
-
-function analyze_image_local($image_data, $history) {
-    validate_image_bytes($image_data);
-    $ocr_regions = [];
-    $ocr_meta = [];
-    $ocr = read_image_text_local($image_data, $ocr_regions, true, $ocr_meta);
-    $vision_image = blur_ocr_regions_for_vision_local($image_data, $ocr_regions);
-    $image_info = @getimagesizefromstring($vision_image);
-    $region_list = array_map(function($region) {
-        return ['left' => $region['left'], 'top' => $region['top'], 'width' => $region['width'], 'height' => $region['height']];
-    }, $ocr_regions);
-    $vision_prompt = "Tesseract found text in the image. Its detected regions are covered by solid dark rectangles with orange outlines. " .
-        "The image is {$image_info[0]}x{$image_info[1]} pixels. Detected text boxes (left, top, width, height): " .
-        json_encode($region_list) . ". Do not read, transcribe, infer, reconstruct, or guess any text, including text inside or outside the marked regions. " .
-        "Ignore the marked rectangles completely. Describe only the non-text scene in 3 to 5 complete sentences, around 50 to 80 words. Include concrete objects, expressions, actions, spatial relationships, and relevant visual context. Do not infer hidden text or invent details.";
-    $description = ai_generate_local('moondream', $vision_prompt, [base64_encode($vision_image)]);
-    if ($description === '') throw new RuntimeException('Модель не смогла описать изображение.');
-
-    $liked = array_slice(array_column($history['liked_memes'] ?? [], 'text'), -15);
-    $disliked = array_slice(array_column($history['disliked_memes'] ?? [], 'text'), -15);
-    $prompt = "Оцени мем и верни только JSON: {\"meme_probability\":0,\"rating\":0,\"description\":\"подробное описание сцены в 2-4 предложениях\",\"why_funny\":\"короткое объяснение\",\"is_funny\":false}.\n" .
-        "meme_probability и rating: числа 0-100. rating учитывает вкусы пользователя. description: 2-4 полных предложения, примерно 40-70 слов; конкретно опиши видимую сцену, действия, выражения и связь деталей с шуткой. Не повторяй OCR дословно, не додумывай скрытый текст и не добавляй невидимые детали. why_funny объясняет суть шутки кратко; если ее нет, скажи почему. is_funny: true только если действительно смешно.\n" .
-        'OCR (возможны ошибки): ' . $ocr . "\nОписание сцены: " . $description . "\nЛАЙКИ: " .
-        json_encode($liked, JSON_UNESCAPED_UNICODE) . "\nДИЗЛАЙКИ: " . json_encode($disliked, JSON_UNESCAPED_UNICODE);
-    $assessment = json_decode(ai_generate_local('qwen2.5:3b', $prompt, [], 'json'), true);
-    if (!is_array($assessment) || !is_numeric($assessment['rating'] ?? null) || !is_numeric($assessment['meme_probability'] ?? null)) {
-        throw new RuntimeException('Модель вернула некорректный JSON-анализ.');
-    }
-    $is_funny = $assessment['is_funny'] ?? false;
-    if (!is_bool($is_funny)) $is_funny = in_array(strtolower((string)$is_funny), ['true', 'yes', 'да', '1'], true);
-    $vision_mime = $image_info['mime'] ?? 'image/png';
-
-    return [
-        'rating' => max(0, min(100, (int)$assessment['rating'])),
-        'meme_probability' => max(0, min(100, (int)$assessment['meme_probability'])),
-        'description' => trim((string)($assessment['description'] ?? $description)),
-        'why_funny' => trim((string)($assessment['why_funny'] ?? '')),
-        'is_funny' => $is_funny,
-        'ocr' => $ocr,
-        'ocr_diagnostics' => $ocr_meta,
-        'vision_preview' => 'data:' . $vision_mime . ';base64,' . base64_encode($vision_image),
-        'model' => 'moondream + qwen2.5:3b'
-    ];
 }
 
 function source_post_url($meme) {
@@ -523,22 +195,24 @@ function source_post_url($meme) {
     }
     $thread_id = (string)($meme['thread_id'] ?? '');
     $post_id = (string)($meme['post_id'] ?? '');
-    if (!preg_match('/^[a-z0-9_-]{1,30}$/i', $board) || !preg_match('/^[0-9]{1,20}$/', $thread_id) || !preg_match('/^[0-9]{1,20}$/', $post_id)) {
+    if (!is_valid_dvach_board($board) || !is_valid_dvach_id($thread_id) || !is_valid_dvach_id($post_id)) {
         return '';
     }
-    return 'https://2ch.hk/' . rawurlencode($board) . '/res/' . rawurlencode($thread_id) . '.html#' . rawurlencode($post_id);
+    return dvach_post_url($board, $thread_id, $post_id);
 }
+
+// ---- Database editor ----
 
 function database_editor_definitions() {
     return [
         'memes_pool' => [
             'label' => 'Пул мемов',
-            'file' => __DIR__ . '/memes_pool.json',
+            'file' => POOL_FILE,
             'collections' => ['items' => 'Мемы']
         ],
         'meme_history' => [
             'label' => 'История оценок',
-            'file' => __DIR__ . '/meme_history.json',
+            'file' => HISTORY_FILE,
             'collections' => [
                 'liked_memes' => 'Лайки',
                 'disliked_memes' => 'Дизлайки',
@@ -548,7 +222,7 @@ function database_editor_definitions() {
         ],
         'sources_db' => [
             'label' => 'Каталог источников',
-            'file' => __DIR__ . '/sources_db.json',
+            'file' => SOURCES_FILE,
             'collections' => [
                 '2ch_boards' => 'Доски 2ch',
                 'vk_publics' => 'Паблики ВКонтакте',
@@ -585,20 +259,7 @@ function database_editor_save($database, $definition, $data, $collection, $items
     } else {
         $data[$collection] = array_values($items);
     }
-
-    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE);
-    if ($json === false) throw new RuntimeException('Не удалось сериализовать базу в JSON.');
-    $file = $definition['file'];
-    $temporary_file = tempnam(dirname($file), '.meme-db-');
-    if ($temporary_file === false) throw new RuntimeException('Нет прав на запись в каталог баз данных.');
-
-    $written = file_put_contents($temporary_file, $json, LOCK_EX);
-    $mode = is_file($file) ? (fileperms($file) & 0777) : 0664;
-    @chmod($temporary_file, $mode);
-    if ($written === false || !rename($temporary_file, $file)) {
-        @unlink($temporary_file);
-        throw new RuntimeException('Не удалось сохранить базу данных. Проверьте права каталога.');
-    }
+    save_data($definition['file'], $data);
 }
 
 function database_editor_validate_record($database, $collection, $record) {
@@ -612,7 +273,7 @@ function database_editor_validate_record($database, $collection, $record) {
         return;
     }
 
-    if (in_array($collection, ['liked_memes', 'disliked_memes', 'undecided_memes', 'wrong_topic_memes'], true)) {
+    if (in_array($collection, HISTORY_COLLECTIONS, true)) {
         if (!is_array($record) || array_is_list($record) || !is_string($record['text'] ?? null) || !is_numeric($record['rating_assigned'] ?? null)) {
             throw new InvalidArgumentException('Для записи истории нужны объект, строка text и число rating_assigned.');
         }
@@ -640,36 +301,54 @@ function database_editor_validate_record($database, $collection, $record) {
     }
 }
 
-$action = $_GET['action'] ?? ''; // Безопасное объявление $action
-$debug_mode = ($_GET['debug'] ?? '') === '1';
-ensure_default_project_data();
+// ---- HTTP helpers ----
 
-if ($debug_mode) {
-    if (session_status() === PHP_SESSION_NONE) session_start();
-    if (!isset($_SESSION['meme_tinder_debug'])) {
-        $_SESSION['meme_tinder_debug'] = debug_initial_state();
-    }
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'vk_oauth_status') {
+function json_response($data, $status = 200): never {
+    http_response_code($status);
     header('Content-Type: application/json');
-    $config = vk_oauth_config();
-    $tokens = load_vk_tokens();
-    echo json_encode([
-        'configured' => !$debug_mode && $config['client_id'] !== '' && $config['redirect_uri'] !== '',
-        'connected' => !$debug_mode && !empty($tokens['refresh_token']),
-        'user_id' => $debug_mode ? null : ($tokens['user_id'] ?? null)
-    ], JSON_UNESCAPED_UNICODE);
+    echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'vk_oauth_start') {
+function redirect_to_source_tab($vk_result): never {
+    header('Location: index.html?vk=' . $vk_result . '#source-tab');
+    exit;
+}
+
+function ensure_session_started() {
+    if (session_status() === PHP_SESSION_NONE) session_start();
+}
+
+function require_editable_databases($debug_mode) {
+    if ($debug_mode) throw new RuntimeException('Редактирование баз отключено в демо-режиме.');
+}
+
+function load_history() {
+    return load_data(HISTORY_FILE, empty_history());
+}
+
+function load_source_db() {
+    return normalize_source_db(load_data(SOURCES_FILE, create_default_source_catalog()));
+}
+
+// ---- VK OAuth ----
+
+function handle_vk_oauth_status($debug_mode) {
+    $config = vk_oauth_config();
+    $tokens = load_vk_tokens();
+    json_response([
+        'configured' => !$debug_mode && $config['client_id'] !== '' && $config['redirect_uri'] !== '',
+        'connected' => !$debug_mode && !empty($tokens['refresh_token']),
+        'user_id' => $debug_mode ? null : ($tokens['user_id'] ?? null)
+    ]);
+}
+
+function handle_vk_oauth_start($debug_mode) {
     $config = vk_oauth_config();
     if ($debug_mode || $config['client_id'] === '' || $config['redirect_uri'] === '') {
-        header('Location: index.html?vk=misconfigured#source-tab');
-        exit;
+        redirect_to_source_tab('misconfigured');
     }
-    if (session_status() === PHP_SESSION_NONE) session_start();
+    ensure_session_started();
     $state = bin2hex(random_bytes(24));
     $verifier = rtrim(strtr(base64_encode(random_bytes(48)), '+/', '-_'), '=');
     $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
@@ -692,8 +371,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'vk_oauth_start') {
     exit;
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'vk_oauth_callback') {
-    if (session_status() === PHP_SESSION_NONE) session_start();
+function handle_vk_oauth_callback() {
+    ensure_session_started();
     $callback = $_GET;
     if (isset($callback['payload'])) {
         $payload = json_decode((string)$callback['payload'], true);
@@ -706,12 +385,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'vk_oauth_callback') {
     $device_id = (string)($callback['device_id'] ?? '');
     $config = vk_oauth_config();
     if ((int)($oauth_state['started_at'] ?? 0) < time() - 600 || empty($oauth_state['state']) || !hash_equals((string)$oauth_state['state'], $state)) {
-        header('Location: index.html?vk=error#source-tab');
-        exit;
+        redirect_to_source_tab('error');
     }
     if ($code === '' || $device_id === '' || $config['client_id'] === '' || $config['redirect_uri'] === '') {
-        header('Location: index.html?vk=error#source-tab');
-        exit;
+        redirect_to_source_tab('error');
     }
     try {
         $parameters = [
@@ -732,21 +409,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'vk_oauth_callback') {
         $tokens['expires_at'] = time() + max(0, (int)($tokens['expires_in'] ?? 0));
         save_vk_tokens($tokens);
         session_regenerate_id(true);
-        header('Location: index.html?vk=connected#source-tab');
+        redirect_to_source_tab('connected');
     } catch (Throwable $error) {
         error_log('VK OAuth callback failed: ' . $error->getMessage());
-        header('Location: index.html?vk=error#source-tab');
+        redirect_to_source_tab('error');
     }
-    exit;
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'database_options') {
-    header('Content-Type: application/json');
-    if ($debug_mode) {
-        http_response_code(403);
-        echo json_encode(['message' => 'Редактирование баз отключено в демо-режиме.'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
+// ---- Database editor ----
+
+function handle_database_options($debug_mode) {
+    if ($debug_mode) json_response(['message' => 'Редактирование баз отключено в демо-режиме.'], 403);
     $databases = [];
     foreach (database_editor_definitions() as $id => $definition) {
         $collections = [];
@@ -755,356 +428,334 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'database_options') {
         }
         $databases[] = ['id' => $id, 'label' => $definition['label'], 'collections' => $collections];
     }
-    echo json_encode(['databases' => $databases], JSON_UNESCAPED_UNICODE);
-    exit;
+    json_response(['databases' => $databases]);
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'database_read') {
-    header('Content-Type: application/json');
+function handle_database_read($debug_mode) {
     try {
-        if ($debug_mode) throw new RuntimeException('Редактирование баз отключено в демо-режиме.');
+        require_editable_databases($debug_mode);
         $database = $_GET['database'] ?? '';
         $collection = $_GET['collection'] ?? '';
         [$definition, $data] = database_editor_load($database);
         $items = database_editor_collection($database, $definition, $data, $collection);
-        echo json_encode([
+        json_response([
             'database_label' => $definition['label'],
             'collection_label' => $definition['collections'][$collection],
             'items' => $items
-        ], JSON_UNESCAPED_UNICODE);
+        ]);
     } catch (Throwable $error) {
-        http_response_code(400);
-        echo json_encode(['message' => $error->getMessage()], JSON_UNESCAPED_UNICODE);
+        json_response(['message' => $error->getMessage()], 400);
     }
-    exit;
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_current_meme') {
-    header('Content-Type: application/json');
-    $pool = $debug_mode ? $_SESSION['meme_tinder_debug']['pool'] : load_data($pool_file, []);
+function database_editor_require_record($input) {
+    if (!array_key_exists('record', $input)) throw new InvalidArgumentException('Не переданы данные записи.');
+    return $input['record'];
+}
+
+function database_editor_assert_same_shape($existing, $record) {
+    if (is_array($existing) !== is_array($record)) {
+        throw new InvalidArgumentException('Нельзя менять тип записи.');
+    }
+    if (is_array($existing) && array_is_list($existing) !== array_is_list($record)) {
+        throw new InvalidArgumentException('Тип структуры записи не совпадает.');
+    }
+    if (!is_array($existing) && gettype($existing) !== gettype($record)) {
+        throw new InvalidArgumentException('Нельзя менять тип значения записи.');
+    }
+}
+
+function handle_database_change($action, $input, $debug_mode) {
+    try {
+        require_editable_databases($debug_mode);
+        if (!is_array($input)) throw new InvalidArgumentException('Некорректный запрос.');
+        $database = $input['database'] ?? '';
+        $collection = $input['collection'] ?? '';
+        [$definition, $data] = database_editor_load($database);
+        $items = database_editor_collection($database, $definition, $data, $collection);
+
+        if ($action === 'database_add') {
+            $record = database_editor_require_record($input);
+            database_editor_validate_record($database, $collection, $record);
+            $items[] = $record;
+        } else {
+            $index = filter_var($input['index'] ?? null, FILTER_VALIDATE_INT);
+            if ($index === false || $index < 0) throw new InvalidArgumentException('Некорректный номер записи.');
+            if (!array_key_exists($index, $items)) throw new OutOfBoundsException('Запись уже удалена или не существует.');
+
+            if ($action === 'database_update') {
+                $record = database_editor_require_record($input);
+                database_editor_assert_same_shape($items[$index], $record);
+                database_editor_validate_record($database, $collection, $record);
+                $items[$index] = $record;
+            } else {
+                array_splice($items, $index, 1);
+            }
+        }
+
+        database_editor_save($database, $definition, $data, $collection, $items);
+        json_response(['status' => 'success', 'count' => count($items)]);
+    } catch (Throwable $error) {
+        json_response(['status' => 'error', 'message' => $error->getMessage()], 400);
+    }
+}
+
+// ---- Memes ----
+
+function handle_get_current_meme($debug_mode) {
+    $pool = $debug_mode ? $_SESSION['meme_tinder_debug']['pool'] : load_data(POOL_FILE, []);
     if (empty($pool)) {
         $parser_status = $debug_mode ? 'cooldown' : start_meme_parser_if_needed();
         if (in_array($parser_status, ['started', 'running'], true)) {
-            echo json_encode(['status' => 'loading', 'message' => 'Ищем посты...', 'activity' => meme_parser_activity()], JSON_UNESCAPED_UNICODE);
-        } else {
-            echo json_encode(['status' => 'empty', 'message' => 'Новых мемов пока нет. Можно повторить поиск или добавить запись вручную.'], JSON_UNESCAPED_UNICODE);
+            json_response(['status' => 'loading', 'message' => 'Ищем посты...', 'activity' => meme_parser_activity()]);
         }
-    } else {
-        $meme = $pool[0];
-        $meme['images'] = [$meme['image']];
-        $meme['captions'] = [$meme['captions'][0] ?? ($meme['text'] ?? '')];
-        $meme['source_url'] = source_post_url($meme);
-        echo json_encode($meme, JSON_UNESCAPED_UNICODE);
+        json_response(['status' => 'empty', 'message' => 'Новых мемов пока нет. Можно повторить поиск или добавить запись вручную.']);
     }
-    exit;
+    $meme = $pool[0];
+    $meme['images'] = [$meme['image']];
+    $meme['captions'] = [$meme['captions'][0] ?? ($meme['text'] ?? '')];
+    $meme['source_url'] = source_post_url($meme);
+    json_response($meme);
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    header('Content-Type: application/json');
-    $input = json_decode(file_get_contents('php://input'), true);
+function handle_prepare_vision_preview() {
+    try {
+        $image_data = read_request_image(null, 'Не удалось загрузить изображение для OCR.', 'Не передана ссылка на изображение.');
+        validate_image_bytes($image_data);
+        $ocr_regions = [];
+        $ocr_meta = [];
+        read_image_text_local($image_data, $ocr_regions, false, $ocr_meta);
+        $vision_image = mask_ocr_regions($image_data, $ocr_regions);
+        json_response([
+            'vision_preview' => image_data_uri($vision_image),
+            'ocr_regions_count' => count($ocr_regions),
+            'ocr_diagnostics' => $ocr_meta
+        ]);
+    } catch (Throwable $error) {
+        json_response(['message' => $error->getMessage()], 400);
+    }
+}
 
-    if (in_array($action, ['database_add', 'database_update', 'database_delete'], true)) {
-        try {
-            if ($debug_mode) throw new RuntimeException('Редактирование баз отключено в демо-режиме.');
-            if (!is_array($input)) throw new InvalidArgumentException('Некорректный запрос.');
-            $database = $input['database'] ?? '';
-            $collection = $input['collection'] ?? '';
-            [$definition, $data] = database_editor_load($database);
-            $items = database_editor_collection($database, $definition, $data, $collection);
+function handle_analyze_image($input, $debug_mode) {
+    try {
+        $image_data = read_request_image($input, 'Не удалось загрузить файл.', 'Добавьте ссылку или выберите файл изображения.');
+        $history = $debug_mode ? $_SESSION['meme_tinder_debug']['history'] : load_history();
+        json_response(analyze_image_local($image_data, $history));
+    } catch (Throwable $error) {
+        json_response(['status' => 'error', 'message' => $error->getMessage()], 400);
+    }
+}
 
-            if ($action === 'database_add') {
-                if (!array_key_exists('record', $input)) throw new InvalidArgumentException('Не переданы данные записи.');
-                $record = $input['record'];
-                database_editor_validate_record($database, $collection, $record);
-                $items[] = $record;
-            } else {
-                $index = filter_var($input['index'] ?? null, FILTER_VALIDATE_INT);
-                if ($index === false || $index < 0) throw new InvalidArgumentException('Некорректный номер записи.');
-                if (!array_key_exists($index, $items)) throw new OutOfBoundsException('Запись уже удалена или не существует.');
-
-                if ($action === 'database_update') {
-                if (!array_key_exists('record', $input)) throw new InvalidArgumentException('Не переданы данные записи.');
-                $existing = $items[$index];
-                $record = $input['record'];
-                if (is_array($existing) !== is_array($record)) {
-                    throw new InvalidArgumentException('Нельзя менять тип записи.');
-                }
-                if (is_array($existing) && array_is_list($existing) !== array_is_list($record)) {
-                    throw new InvalidArgumentException('Тип структуры записи не совпадает.');
-                }
-                if (!is_array($existing) && gettype($existing) !== gettype($record)) {
-                    throw new InvalidArgumentException('Нельзя менять тип значения записи.');
-                }
-                database_editor_validate_record($database, $collection, $record);
-                $items[$index] = $record;
-                } else {
-                    array_splice($items, $index, 1);
-                }
-            }
-
-            database_editor_save($database, $definition, $data, $collection, $items);
-            echo json_encode(['status' => 'success', 'count' => count($items)]);
-        } catch (Throwable $error) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => $error->getMessage()], JSON_UNESCAPED_UNICODE);
-        }
-        exit;
+function handle_meme_vote($input, $debug_mode) {
+    $vote = $input['vote'] ?? '';
+    $meme = $input['meme'] ?? null;
+    $map = ['like' => 'liked_memes', 'dislike' => 'disliked_memes', 'maybe' => 'undecided_memes', 'wrong' => 'wrong_topic_memes'];
+    $has_media = !empty($meme['image']) || (!empty($meme['images']) && is_array($meme['images']));
+    if (!isset($map[$vote]) || !is_array($meme) || !$has_media) {
+        json_response(['status' => 'error', 'message' => 'Некорректный голос или мем'], 400);
     }
 
-    if ($action === 'prepare_vision_preview') {
-        try {
-            if (isset($_FILES['image_file']) && $_FILES['image_file']['error'] !== UPLOAD_ERR_NO_FILE) {
-                $file = $_FILES['image_file'];
-                if ($file['error'] !== UPLOAD_ERR_OK) throw new RuntimeException('Не удалось загрузить изображение для OCR.');
-                if ($file['size'] > 10 * 1024 * 1024) throw new RuntimeException('Изображение должно быть не больше 10 МБ.');
-                $image_data = file_get_contents($file['tmp_name']);
-            } else {
-                $image_url = trim($_POST['image_url'] ?? '');
-                if ($image_url === '') throw new RuntimeException('Не передана ссылка на изображение.');
-                $image_data = fetch_public_image($image_url);
-            }
-            validate_image_bytes($image_data);
-            $ocr_regions = [];
-            $ocr_meta = [];
-            read_image_text_local($image_data, $ocr_regions, false, $ocr_meta);
-            $vision_image = blur_ocr_regions_for_vision_local($image_data, $ocr_regions);
-            $image_info = @getimagesizefromstring($vision_image);
-            $mime = $image_info['mime'] ?? 'image/png';
-            echo json_encode([
-                'vision_preview' => 'data:' . $mime . ';base64,' . base64_encode($vision_image),
-                'ocr_regions_count' => count($ocr_regions),
-                'ocr_diagnostics' => $ocr_meta
-            ], JSON_UNESCAPED_UNICODE);
-        } catch (Throwable $error) {
-            http_response_code(400);
-            echo json_encode(['message' => $error->getMessage()], JSON_UNESCAPED_UNICODE);
-        }
-        exit;
+    $first_image = !empty($meme['image']) ? $meme['image'] : (is_array($meme['images'] ?? null) ? ($meme['images'][0] ?? '') : '');
+
+    if ($debug_mode) {
+        $state = &$_SESSION['meme_tinder_debug'];
+        $state['history'][$map[$vote]][] = ['text' => $meme['text'] ?? '', 'rating_assigned' => $meme['rating'] ?? 0, 'timestamp' => time()];
+        $state['pool'] = array_values(array_filter($state['pool'], function($item) use ($first_image) { return ($item['image'] ?? '') !== $first_image; }));
+        json_response(['status' => 'success', 'debug' => true]);
     }
 
-    if ($action === 'analyze_image') {
-        try {
-            if (isset($_FILES['image_file']) && $_FILES['image_file']['error'] !== UPLOAD_ERR_NO_FILE) {
-                $file = $_FILES['image_file'];
-                if ($file['error'] !== UPLOAD_ERR_OK) throw new RuntimeException('Не удалось загрузить файл.');
-                if ($file['size'] > 10 * 1024 * 1024) throw new RuntimeException('Изображение должно быть не больше 10 МБ.');
-                $image_data = file_get_contents($file['tmp_name']);
-            } else {
-                $image_url = trim($_POST['image_url'] ?? ($input['image_url'] ?? ''));
-                if ($image_url === '') throw new RuntimeException('Добавьте ссылку или выберите файл изображения.');
-                $image_data = fetch_public_image($image_url);
-            }
+    $history = load_history();
+    $history[$map[$vote]][] = [
+        'image' => $first_image,
+        'text' => $meme['text'],
+        'ai_short_description' => $meme['ai_description'] ?? 'Без описания ИИ',
+        'why_funny' => $meme['why_funny'] ?? '',
+        'is_funny' => $meme['is_funny'] ?? null,
+        'meme_probability' => $meme['meme_probability'] ?? null,
+        'rating_assigned' => $meme['rating'],
+        'source' => $meme['source'],
+        'board' => $meme['board'] ?? '',
+        'thread_id' => $meme['thread_id'] ?? '',
+        'post_id' => $meme['post_id'] ?? '',
+        'source_url' => source_post_url($meme),
+        'timestamp' => time()
+    ];
+    save_data(HISTORY_FILE, $history);
 
-            $history = $debug_mode
-                ? $_SESSION['meme_tinder_debug']['history']
-                : load_data($history_file, ['liked_memes' => [], 'disliked_memes' => []]);
-            echo json_encode(analyze_image_local($image_data, $history), JSON_UNESCAPED_UNICODE);
-        } catch (Throwable $error) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => $error->getMessage()], JSON_UNESCAPED_UNICODE);
-        }
-        exit;
+    $pool = array_filter(load_data(POOL_FILE, []), function($item) use ($meme) { return $item['image'] !== $meme['image']; });
+    save_data(POOL_FILE, array_values($pool));
+
+    json_response(['status' => 'success']);
+}
+
+function handle_refresh_memes($debug_mode) {
+    if ($debug_mode) {
+        json_response(['status' => 'error', 'message' => 'Поиск мемов отключён в демо-режиме.'], 403);
     }
+    $parser_status = start_meme_parser_if_needed(true);
+    json_response([
+        'status' => in_array($parser_status, ['started', 'running'], true) ? 'loading' : 'error',
+        'message' => $parser_status === 'unavailable' ? 'Не удалось запустить поиск мемов на сервере.' : 'Ищем посты...'
+    ]);
+}
 
-    if ($debug_mode && $action === 'debug_reset') {
-        $_SESSION['meme_tinder_debug'] = debug_initial_state();
-        echo json_encode(['status' => 'success', 'debug' => true]);
-        exit;
-    }
-    
-    if ($action === 'meme_vote') {
-        $vote = $input['vote'] ?? '';
-        $meme = $input['meme'] ?? null;
-        $map = ['like' => 'liked_memes', 'dislike' => 'disliked_memes', 'maybe' => 'undecided_memes', 'wrong' => 'wrong_topic_memes'];
-        $has_media = !empty($meme['image']) || (!empty($meme['images']) && is_array($meme['images']));
-        if (!isset($map[$vote]) || !is_array($meme) || !$has_media) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Некорректный голос или мем']);
-            exit;
-        }
+// ---- Source discovery ----
 
-        $first_image = !empty($meme['image']) ? $meme['image'] : (is_array($meme['images'] ?? null) ? ($meme['images'][0] ?? '') : '');
-
-        if ($debug_mode) {
-            $state = &$_SESSION['meme_tinder_debug'];
-            $state['history'][$map[$vote]][] = ['text' => $meme['text'] ?? '', 'rating_assigned' => $meme['rating'] ?? 0, 'timestamp' => time()];
-            $state['pool'] = array_values(array_filter($state['pool'], function($item) use ($first_image) { return ($item['image'] ?? '') !== $first_image; }));
-            echo json_encode(['status' => 'success', 'debug' => true]);
-            exit;
-        }
-
-        $history = load_data($history_file, ['liked_memes' => [], 'disliked_memes' => [], 'undecided_memes' => [], 'wrong_topic_memes' => []]);
-        $history_entry = [
-            'image' => $first_image,
-            'text' => $meme['text'],
-            'ai_short_description' => $meme['ai_description'] ?? 'Без описания ИИ',
-            'why_funny' => $meme['why_funny'] ?? '',
-            'is_funny' => $meme['is_funny'] ?? null,
-            'meme_probability' => $meme['meme_probability'] ?? null,
-            'rating_assigned' => $meme['rating'],
-            'source' => $meme['source'],
-            'board' => $meme['board'] ?? '',
-            'thread_id' => $meme['thread_id'] ?? '',
-            'post_id' => $meme['post_id'] ?? '',
-            'source_url' => source_post_url($meme),
-            'timestamp' => time()
-        ];
-        
-        $history[$map[$vote]][] = $history_entry;
-        save_data($history_file, $history);
-        
-        $pool = load_data($pool_file, []);
-        $pool = array_filter($pool, function($m) use ($meme) { return $m['image'] !== $meme['image']; });
-        save_data($pool_file, array_values($pool));
-        
-        echo json_encode(['status' => 'success']);
-        exit;
-    }
-    
-    if ($action === 'suggest_sources') {
-        $database = normalize_source_db(load_data($sources_file, create_default_source_catalog()));
-        $candidates = [];
-        $platform_filter = strtolower(trim((string)($input['platform'] ?? 'any')));
-        $platform_filters = ['any' => 'any', 'telegram' => 'Telegram', 'vk' => 'ВКонтакте', 'dvach' => 'Двач'];
-        if (!isset($platform_filters[$platform_filter])) {
-            http_response_code(400);
-            echo json_encode(['message' => 'Неизвестная платформа источника.'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        $include_dvach = in_array($platform_filter, ['any', 'dvach'], true);
-        $include_telegram = in_array($platform_filter, ['any', 'telegram'], true);
-        $include_vk = in_array($platform_filter, ['any', 'vk'], true);
-
-        $boards = $database['2ch_boards'] ?? [];
-        shuffle($boards);
-        if ($include_dvach) foreach (array_slice($boards, 0, 4) as $board) {
-            $catalog = fetch_2ch_json($board);
-            foreach (($catalog['threads'] ?? []) as $thread) {
-                $thread_id = (string)($thread['num'] ?? '');
-                if (!preg_match('/^[0-9]{1,20}$/', $thread_id)) continue;
-                $source_id = 'dvach:' . $board . ':' . $thread_id;
-                if (source_vote_exists($database, $source_id)) continue;
-                $subject = html_entity_decode(strip_tags((string)($thread['subject'] ?? '')), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-                $subject = trim(preg_replace('/\s+/u', ' ', $subject) ?? '');
-                $candidates[] = [
-                    'source_id' => $source_id,
-                    'name' => 'Двач /' . $board . '/ · тред #' . $thread_id,
-                    'board' => $board,
-                    'thread_id' => $thread_id,
-                    'platform' => 'Двач',
-                    'reason' => $subject ?: 'Тред с постами и изображениями.'
-                ];
-                if (count($candidates) >= 30) break 2;
-            }
-        }
-
-        if ($include_telegram) foreach (($database['telegram_channels'] ?? []) as $channel) {
-            $channel_id = ltrim(trim((string)($channel['id'] ?? '')), '@');
-            if (!preg_match('/^[A-Za-z][A-Za-z0-9_]{4,31}$/', $channel_id)) continue;
-            $source_id = 'telegram:' . strtolower($channel_id);
+function dvach_source_candidates($database) {
+    $candidates = [];
+    $boards = $database['2ch_boards'] ?? [];
+    shuffle($boards);
+    foreach (array_slice($boards, 0, 4) as $board) {
+        $catalog = fetch_2ch_json($board);
+        foreach (($catalog['threads'] ?? []) as $thread) {
+            $thread_id = (string)($thread['num'] ?? '');
+            if (!is_valid_dvach_id($thread_id)) continue;
+            $source_id = 'dvach:' . $board . ':' . $thread_id;
             if (source_vote_exists($database, $source_id)) continue;
+            $subject = clean_html_text($thread['subject'] ?? '');
             $candidates[] = [
                 'source_id' => $source_id,
-                'id' => $channel_id,
-                'name' => 'Telegram | ' . ($channel['name'] ?? $channel_id),
-                'platform' => 'Telegram',
-                'reason' => 'Публичный Telegram-канал с недавними постами.'
+                'name' => 'Двач /' . $board . '/ · тред #' . $thread_id,
+                'board' => $board,
+                'thread_id' => $thread_id,
+                'platform' => 'Двач',
+                'reason' => $subject ?: 'Тред с постами и изображениями.'
             ];
+            if (count($candidates) >= 30) return $candidates;
         }
+    }
+    return $candidates;
+}
 
-        $vk_connected = false;
-        if ($include_vk) {
-            try {
-                $vk_connected = vk_access_token() !== '';
-            } catch (Throwable $error) {
-                error_log('VK token refresh failed during source discovery: ' . $error->getMessage());
-            }
-        }
-        if ($vk_connected) {
-            foreach (($database['vk_publics'] ?? []) as $public) {
-                $public_id = trim((string)($public['id'] ?? ''));
-                if (!preg_match('/^[A-Za-z0-9_.-]{1,64}$/', $public_id)) continue;
-                $source_id = 'vk:' . strtolower($public_id);
-                if (source_vote_exists($database, $source_id)) continue;
-                $candidates[] = [
-                    'source_id' => $source_id,
-                    'id' => $public_id,
-                    'name' => 'ВКонтакте | ' . ($public['name'] ?? $public_id),
-                    'platform' => 'ВКонтакте',
-                    'reason' => 'Публичное сообщество ВКонтакте с изображениями в постах.'
-                ];
-            }
-        }
+function telegram_source_candidates($database) {
+    $candidates = [];
+    foreach (($database['telegram_channels'] ?? []) as $channel) {
+        $channel_id = ltrim(trim((string)($channel['id'] ?? '')), '@');
+        if (!is_valid_telegram_channel($channel_id)) continue;
+        $source_id = 'telegram:' . strtolower($channel_id);
+        if (source_vote_exists($database, $source_id)) continue;
+        $candidates[] = [
+            'source_id' => $source_id,
+            'id' => $channel_id,
+            'name' => 'Telegram | ' . ($channel['name'] ?? $channel_id),
+            'platform' => 'Telegram',
+            'reason' => 'Публичный Telegram-канал с недавними постами.'
+        ];
+    }
+    return $candidates;
+}
 
-        if (empty($candidates)) {
-            $message = $platform_filter === 'vk' && !$vk_connected
-                ? 'Сначала подключите VK OAuth, чтобы искать паблики.'
-                : 'Новых неоценённых источников на этой платформе пока нет.';
-            echo json_encode(['discovered' => null, 'message' => $message], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
+function vk_source_candidates($database) {
+    $candidates = [];
+    foreach (($database['vk_publics'] ?? []) as $public) {
+        $public_id = trim((string)($public['id'] ?? ''));
+        if (!is_valid_vk_domain($public_id)) continue;
+        $source_id = 'vk:' . strtolower($public_id);
+        if (source_vote_exists($database, $source_id)) continue;
+        $candidates[] = [
+            'source_id' => $source_id,
+            'id' => $public_id,
+            'name' => 'ВКонтакте | ' . ($public['name'] ?? $public_id),
+            'platform' => 'ВКонтакте',
+            'reason' => 'Публичное сообщество ВКонтакте с изображениями в постах.'
+        ];
+    }
+    return $candidates;
+}
 
-        if ($platform_filter === 'any') {
-            $platform_candidates = [];
-            foreach ($candidates as $candidate) {
-                $platform_candidates[$candidate['platform']][] = $candidate;
-            }
-            $platform_order = array_keys($platform_candidates);
-            shuffle($platform_order);
-            $platform_vote_counts = [];
-            foreach (($database['source_votes'] ?? []) as $vote) {
-                $voted_platform = $vote['platform'] ?? '';
-                $platform_vote_counts[$voted_platform] = ($platform_vote_counts[$voted_platform] ?? 0) + 1;
-            }
-            usort($platform_order, function($first, $second) use ($platform_vote_counts) {
-                return ($platform_vote_counts[$first] ?? 0) <=> ($platform_vote_counts[$second] ?? 0);
-            });
-            $ordered_candidates = [];
-            foreach ($platform_order as $platform) {
-                shuffle($platform_candidates[$platform]);
-                $ordered_candidates = array_merge($ordered_candidates, $platform_candidates[$platform]);
-            }
-            $candidates = $ordered_candidates;
-        } else {
-            shuffle($candidates);
-        }
-        $discovered = null;
-        foreach (array_slice($candidates, 0, 12) as $candidate) {
-            try {
-                $candidate['posts'] = build_source_preview_posts($candidate, 4);
-            } catch (Throwable $error) {
-                error_log('Source preview failed (' . ($candidate['platform'] ?? 'unknown') . '): ' . $error->getMessage());
-                continue;
-            }
-            if ($candidate['posts']) {
-                $discovered = $candidate;
-                break;
-            }
-        }
-        if (!$discovered) {
-            http_response_code(502);
-            echo json_encode(['discovered' => null, 'message' => 'Не удалось получить посты с изображениями ни из одного кандидата. Для VK подключите аккаунт, Telegram-каналы должны быть публичными.'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
+function vk_is_connected() {
+    try {
+        return vk_access_token() !== '';
+    } catch (Throwable $error) {
+        error_log('VK token refresh failed during source discovery: ' . $error->getMessage());
+        return false;
+    }
+}
 
-        echo json_encode(['discovered' => $discovered], JSON_UNESCAPED_UNICODE);
-        exit;
+/** Platforms with fewer past votes go first; candidates are shuffled within each platform. */
+function order_candidates_by_platform_votes($candidates, $source_votes) {
+    $platform_candidates = [];
+    foreach ($candidates as $candidate) {
+        $platform_candidates[$candidate['platform']][] = $candidate;
+    }
+    $platform_order = array_keys($platform_candidates);
+    shuffle($platform_order);
+    $platform_vote_counts = [];
+    foreach ($source_votes as $vote) {
+        $voted_platform = $vote['platform'] ?? '';
+        $platform_vote_counts[$voted_platform] = ($platform_vote_counts[$voted_platform] ?? 0) + 1;
+    }
+    usort($platform_order, function($first, $second) use ($platform_vote_counts) {
+        return ($platform_vote_counts[$first] ?? 0) <=> ($platform_vote_counts[$second] ?? 0);
+    });
+    $ordered_candidates = [];
+    foreach ($platform_order as $platform) {
+        shuffle($platform_candidates[$platform]);
+        $ordered_candidates = array_merge($ordered_candidates, $platform_candidates[$platform]);
+    }
+    return $ordered_candidates;
+}
+
+function handle_suggest_sources($input) {
+    $database = load_source_db();
+    $platform_filter = strtolower(trim((string)($input['platform'] ?? 'any')));
+    if (!in_array($platform_filter, ['any', 'telegram', 'vk', 'dvach'], true)) {
+        json_response(['message' => 'Неизвестная платформа источника.'], 400);
+    }
+    $includes = function($platform) use ($platform_filter) {
+        return $platform_filter === 'any' || $platform_filter === $platform;
+    };
+
+    $candidates = [];
+    if ($includes('dvach')) $candidates = array_merge($candidates, dvach_source_candidates($database));
+    if ($includes('telegram')) $candidates = array_merge($candidates, telegram_source_candidates($database));
+    $vk_connected = $includes('vk') && vk_is_connected();
+    if ($vk_connected) $candidates = array_merge($candidates, vk_source_candidates($database));
+
+    if (empty($candidates)) {
+        $message = $platform_filter === 'vk' && !$vk_connected
+            ? 'Сначала подключите VK OAuth, чтобы искать паблики.'
+            : 'Новых неоценённых источников на этой платформе пока нет.';
+        json_response(['discovered' => null, 'message' => $message]);
     }
 
-    if ($action === 'source_vote') {
-        $vote = $input['vote'] ?? '';
-        $source = $input['source'] ?? null;
-        if (!in_array($vote, ['approve', 'reject'], true) || !is_array($source)) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Некорректное решение']);
-            exit;
+    if ($platform_filter === 'any') {
+        $candidates = order_candidates_by_platform_votes($candidates, $database['source_votes'] ?? []);
+    } else {
+        shuffle($candidates);
+    }
+    foreach (array_slice($candidates, 0, 12) as $candidate) {
+        try {
+            $candidate['posts'] = build_source_preview_posts($candidate, 4);
+        } catch (Throwable $error) {
+            error_log('Source preview failed (' . ($candidate['platform'] ?? 'unknown') . '): ' . $error->getMessage());
+            continue;
         }
+        if ($candidate['posts']) json_response(['discovered' => $candidate]);
+    }
+    json_response(['discovered' => null, 'message' => 'Не удалось получить посты с изображениями ни из одного кандидата. Для VK подключите аккаунт, Telegram-каналы должны быть публичными.'], 502);
+}
 
-        $db = normalize_source_db(load_data($sources_file, create_default_source_catalog()));
+/** Adds an approved Telegram channel / VK public to its catalog list unless already present. */
+function add_catalog_source(&$db, $catalog_key, $source, $name_prefix) {
+    foreach (($db[$catalog_key] ?? []) as $existing) {
+        if (($existing['id'] ?? null) === $source['id']) return;
+    }
+    $db[$catalog_key][] = ['id' => $source['id'], 'name' => str_replace($name_prefix, '', $source['name'])];
+}
 
-        $source_id = $source['source_id'] ?? ($source['id'] ?? ($source['board'] ?? $source['name']));
+function handle_source_vote($input) {
+    $vote = $input['vote'] ?? '';
+    $source = $input['source'] ?? null;
+    if (!in_array($vote, ['approve', 'reject'], true) || !is_array($source)) {
+        json_response(['status' => 'error', 'message' => 'Некорректное решение'], 400);
+    }
+
+    $db = load_source_db();
+    $source_id = (string)($source['source_id'] ?? ($source['id'] ?? ($source['board'] ?? $source['name'])));
+    if (!source_vote_exists($db, $source_id)) {
         $vote_item = [
-            'source_id' => (string)$source_id,
+            'source_id' => $source_id,
             'platform' => $source['platform'] ?? 'Неизвестно',
             'name' => $source['name'] ?? 'Источник',
             'vote' => $vote,
@@ -1112,51 +763,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
         if (isset($source['thread_id'])) $vote_item['thread_id'] = (string)$source['thread_id'];
         if (isset($source['board'])) $vote_item['board'] = (string)$source['board'];
-
-        if (!source_vote_exists($db, (string)$source_id)) {
-            $db['source_votes'][] = $vote_item;
-        }
-
-        if ($vote === 'approve') {
-            if (($source['platform'] ?? '') === 'Двач' && isset($source['board'])) {
-                if (!in_array($source['board'], $db['2ch_boards'], true)) {
-                    $db['2ch_boards'][] = $source['board'];
-                }
-            } elseif (($source['platform'] ?? '') === 'ВКонтакте' && isset($source['id'])) {
-                $exists = false;
-                foreach (($db['vk_publics'] ?? []) as $pub) {
-                    if (($pub['id'] ?? null) === $source['id']) { $exists = true; break; }
-                }
-                if (!$exists) {
-                    $db['vk_publics'][] = ['id' => $source['id'], 'name' => str_replace('ВКонтакте | ', '', $source['name'])];
-                }
-            } elseif (($source['platform'] ?? '') === 'Telegram' && isset($source['id'])) {
-                $exists = false;
-                foreach (($db['telegram_channels'] ?? []) as $chan) {
-                    if (($chan['id'] ?? null) === $source['id']) { $exists = true; break; }
-                }
-                if (!$exists) {
-                    $db['telegram_channels'][] = ['id' => $source['id'], 'name' => str_replace('Telegram | ', '', $source['name'])];
-                }
-            }
-        }
-
-        save_data($sources_file, $db);
-        echo json_encode(['status' => 'success']);
-        exit;
+        $db['source_votes'][] = $vote_item;
     }
 
-    if ($action === 'refresh_memes') {
-        if ($debug_mode) {
-            http_response_code(403);
-            echo json_encode(['status' => 'error', 'message' => 'Поиск мемов отключён в демо-режиме.'], JSON_UNESCAPED_UNICODE);
-            exit;
+    if ($vote === 'approve') {
+        $platform = $source['platform'] ?? '';
+        if ($platform === 'Двач' && isset($source['board'])) {
+            if (!in_array($source['board'], $db['2ch_boards'], true)) {
+                $db['2ch_boards'][] = $source['board'];
+            }
+        } elseif ($platform === 'ВКонтакте' && isset($source['id'])) {
+            add_catalog_source($db, 'vk_publics', $source, 'ВКонтакте | ');
+        } elseif ($platform === 'Telegram' && isset($source['id'])) {
+            add_catalog_source($db, 'telegram_channels', $source, 'Telegram | ');
         }
-        $parser_status = start_meme_parser_if_needed(true);
-        echo json_encode([
-            'status' => in_array($parser_status, ['started', 'running'], true) ? 'loading' : 'error',
-            'message' => $parser_status === 'unavailable' ? 'Не удалось запустить поиск мемов на сервере.' : 'Ищем посты...'
-        ], JSON_UNESCAPED_UNICODE);
-        exit;
+    }
+
+    save_data(SOURCES_FILE, $db);
+    json_response(['status' => 'success']);
+}
+
+// ---- Dispatch ----
+
+$action = $_GET['action'] ?? '';
+$debug_mode = ($_GET['debug'] ?? '') === '1';
+ensure_default_project_data();
+
+if ($debug_mode) {
+    ensure_session_started();
+    if (!isset($_SESSION['meme_tinder_debug'])) {
+        $_SESSION['meme_tinder_debug'] = debug_initial_state();
+    }
+}
+
+// Every handler terminates the request (json_response / redirect), so cases need no break.
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    switch ($action) {
+        case 'vk_oauth_status': handle_vk_oauth_status($debug_mode);
+        case 'vk_oauth_start': handle_vk_oauth_start($debug_mode);
+        case 'vk_oauth_callback': handle_vk_oauth_callback();
+        case 'database_options': handle_database_options($debug_mode);
+        case 'database_read': handle_database_read($debug_mode);
+        case 'get_current_meme': handle_get_current_meme($debug_mode);
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json');
+    $input = json_decode(file_get_contents('php://input'), true);
+
+    switch ($action) {
+        case 'database_add':
+        case 'database_update':
+        case 'database_delete':
+            handle_database_change($action, $input, $debug_mode);
+        case 'prepare_vision_preview': handle_prepare_vision_preview();
+        case 'analyze_image': handle_analyze_image($input, $debug_mode);
+        case 'debug_reset':
+            if ($debug_mode) {
+                $_SESSION['meme_tinder_debug'] = debug_initial_state();
+                json_response(['status' => 'success', 'debug' => true]);
+            }
+            break;
+        case 'meme_vote': handle_meme_vote($input, $debug_mode);
+        case 'suggest_sources': handle_suggest_sources($input);
+        case 'source_vote': handle_source_vote($input);
+        case 'refresh_memes': handle_refresh_memes($debug_mode);
     }
 }
