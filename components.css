@@ -530,12 +530,55 @@
     padding-right: 4px; /* Отступ, чтобы текст не прилипал к полосе прокрутки */
 }
 
-.controls { 
-    display: flex; 
-    justify-content: space-between; 
-    width: 100%; 
-    margin-top: 20px; 
+/* Sticky "aero" vote bar: frosted glass over the card while scrolling. */
+.controls {
+    position: sticky;
+    bottom: 16px;
+    z-index: 30;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 20px;
+    padding: 12px 16px;
     gap: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03)), rgba(24, 24, 27, 0.5);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    backdrop-filter: blur(18px) saturate(160%);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.complaint-wrap { position: relative; }
+.complaint-menu {
+    position: absolute;
+    bottom: calc(100% + 14px);
+    left: -8px;
+    display: grid;
+    gap: 2px;
+    min-width: 260px;
+    padding: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 14px;
+    background: rgba(24, 24, 27, 0.96);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6);
+}
+.complaint-menu[hidden] { display: none; }
+.complaint-menu button {
+    padding: 10px 12px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: #e4e4e7;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+}
+.complaint-menu button:hover { background: rgba(248, 113, 113, 0.16); color: #fecaca; }
+@media (max-width: 480px) {
+    .controls { padding: 10px 12px; gap: 6px; }
+    .controls .btn { width: 48px; height: 48px; font-size: 20px; }
 }
 .btn { 
     background: #18181b; 

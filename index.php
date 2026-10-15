@@ -217,7 +217,7 @@ function database_editor_definitions() {
                 'liked_memes' => 'Лайки',
                 'disliked_memes' => 'Дизлайки',
                 'undecided_memes' => 'Без решения',
-                'wrong_topic_memes' => 'Не по теме'
+                'wrong_topic_memes' => 'Жалобы'
             ]
         ],
         'sources_db' => [
@@ -529,20 +529,39 @@ function handle_analyze_image($input, $debug_mode) {
     }
 }
 
+/** Skips a meme without rating it: moves it to the end of the pool and writes nothing to history. */
+function handle_meme_postpone($meme, $debug_mode): never {
+    $image = !empty($meme['image']) ? $meme['image'] : ($meme['images'][0] ?? '');
+    $move_to_end = function(array $pool) use ($image) {
+        $postponed = array_filter($pool, function($item) use ($image) { return ($item['image'] ?? '') === $image; });
+        $rest = array_filter($pool, function($item) use ($image) { return ($item['image'] ?? '') !== $image; });
+        return array_values(array_merge($rest, $postponed));
+    };
+    if ($debug_mode) {
+        $_SESSION['meme_tinder_debug']['pool'] = $move_to_end($_SESSION['meme_tinder_debug']['pool']);
+    } else {
+        save_data(POOL_FILE, $move_to_end(load_data(POOL_FILE, [])));
+    }
+    json_response(['status' => 'success', 'postponed' => true]);
+}
+
 function handle_meme_vote($input, $debug_mode) {
     $vote = $input['vote'] ?? '';
     $meme = $input['meme'] ?? null;
     $map = ['like' => 'liked_memes', 'dislike' => 'disliked_memes', 'maybe' => 'undecided_memes', 'wrong' => 'wrong_topic_memes'];
     $has_media = !empty($meme['image']) || (!empty($meme['images']) && is_array($meme['images']));
-    if (!isset($map[$vote]) || !is_array($meme) || !$has_media) {
+    if ((!isset($map[$vote]) && $vote !== 'postpone') || !is_array($meme) || !$has_media) {
         json_response(['status' => 'error', 'message' => 'Некорректный голос или мем'], 400);
     }
+    if ($vote === 'postpone') handle_meme_postpone($meme, $debug_mode);
 
     $first_image = !empty($meme['image']) ? $meme['image'] : (is_array($meme['images'] ?? null) ? ($meme['images'][0] ?? '') : '');
+    // Complaints ("wrong") are stored in wrong_topic_memes for compatibility with existing history files.
+    $complaint_reason = $vote === 'wrong' && in_array($input['reason'] ?? '', COMPLAINT_REASONS, true) ? $input['reason'] : null;
 
     if ($debug_mode) {
         $state = &$_SESSION['meme_tinder_debug'];
-        $state['history'][$map[$vote]][] = ['text' => $meme['text'] ?? '', 'rating_assigned' => $meme['rating'] ?? 0, 'timestamp' => time()];
+        $state['history'][$map[$vote]][] = ['text' => $meme['text'] ?? '', 'rating_assigned' => $meme['rating'] ?? 0, 'complaint_reason' => $complaint_reason, 'timestamp' => time()];
         $state['pool'] = array_values(array_filter($state['pool'], function($item) use ($first_image) { return ($item['image'] ?? '') !== $first_image; }));
         json_response(['status' => 'success', 'debug' => true]);
     }
@@ -561,6 +580,7 @@ function handle_meme_vote($input, $debug_mode) {
         'thread_id' => $meme['thread_id'] ?? '',
         'post_id' => $meme['post_id'] ?? '',
         'source_url' => source_post_url($meme),
+        'complaint_reason' => $complaint_reason,
         'timestamp' => time()
     ];
     save_data(HISTORY_FILE, $history);

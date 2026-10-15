@@ -145,6 +145,31 @@ function initializeImageViewer() {
     });
 }
 
+function initializeComplaintMenu() {
+    const button = document.getElementById('complaint-button');
+    const menu = document.getElementById('complaint-menu');
+    const setOpen = open => {
+        menu.hidden = !open;
+        button.setAttribute('aria-expanded', String(open));
+    };
+    button.addEventListener('click', event => {
+        event.stopPropagation();
+        setOpen(menu.hidden);
+    });
+    menu.addEventListener('click', event => {
+        const item = event.target.closest('[data-reason]');
+        if (!item) return;
+        setOpen(false);
+        voteMeme('wrong', { reason: item.dataset.reason });
+    });
+    document.addEventListener('click', event => {
+        if (!menu.hidden && !event.target.closest('.complaint-wrap')) setOpen(false);
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') setOpen(false);
+    });
+}
+
 function apiUrl(action) {
     const activityLabels = {
         refresh_memes: 'Запущен поиск мемов',
@@ -779,14 +804,14 @@ async function loadCurrentMeme() {
     }
 }
 
-async function voteMeme(voteType) {
+async function voteMeme(voteType, details = {}) {
     if (!currentMeme) return;
     document.getElementById('meme-tab').style.opacity = '0.3';
     try {
         const response = await fetch(apiUrl('meme_vote'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ vote: voteType, meme: currentMeme })
+            body: JSON.stringify({ vote: voteType, meme: currentMeme, ...details })
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         await loadCurrentMeme();
@@ -878,6 +903,7 @@ async function resetDebugDemo() {
 // Автоматический запуск первой загрузки контента при открытии страницы
 document.addEventListener('DOMContentLoaded', () => {
     initializeImageViewer();
+    initializeComplaintMenu();
     initializeActivityConsole();
     appendAppLog('Приложение запущено. Загружаю пул мемов.');
     if (DEBUG_MODE) document.getElementById('debug-banner').style.display = 'flex';

@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Умная ИИ Мемо-Панель</title>
     <!-- Подключение внешних стилей оформления -->
-    <link rel="stylesheet" href="main-layout.css?v=20261015-9">
-    <link rel="stylesheet" href="components.css?v=20261015-9">
-    <link rel="stylesheet" href="overlays.css?v=20261015-9">
+    <link rel="stylesheet" href="main-layout.css?v=20261015-10">
+    <link rel="stylesheet" href="components.css?v=20261015-10">
+    <link rel="stylesheet" href="overlays.css?v=20261015-10">
 </head>
 <body>
 
@@ -58,9 +58,17 @@
                 </div>
             </div>
             <div class="controls">
-                <button class="btn btn-wrong" onclick="voteMeme('wrong')" title="Не по теме">❌</button>
+                <div class="complaint-wrap">
+                    <button id="complaint-button" class="btn btn-wrong" type="button" title="Пожаловаться: не мем или что-то сломано" aria-haspopup="menu" aria-expanded="false">🚩</button>
+                    <div id="complaint-menu" class="complaint-menu" role="menu" hidden>
+                        <button type="button" role="menuitem" data-reason="not_meme">Не мем / не смешная картинка</button>
+                        <button type="button" role="menuitem" data-reason="broken">Сломано: не грузится, обрезано, битый пост</button>
+                        <button type="button" role="menuitem" data-reason="other">Другое</button>
+                    </div>
+                </div>
                 <button class="btn" onclick="voteMeme('dislike')" title="Треш">💩</button>
                 <button class="btn" onclick="voteMeme('maybe')" title="Не знаю">🤷‍♂️</button>
+                <button class="btn" onclick="voteMeme('postpone')" title="Отложить: без оценки, в конец очереди">✋</button>
                 <button class="btn" onclick="voteMeme('like')" title="Годно">🗿</button>
             </div>
         </div>
@@ -189,6 +197,6 @@
     </div>
 
     <!-- Подключение изолированной JS-логики интерфейса -->
-    <script src="script.js?v=20261015-9"></script>
+    <script src="script.js?v=20261015-10"></script>
 </body>
 </html>

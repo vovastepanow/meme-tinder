@@ -10,6 +10,7 @@ const TEXT_MODEL = 'qwen2.5:3b';
 const VISION_MODEL = 'moondream';
 
 const HISTORY_COLLECTIONS = ['liked_memes', 'disliked_memes', 'undecided_memes', 'wrong_topic_memes'];
+const COMPLAINT_REASONS = ['not_meme', 'broken', 'other'];
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 function empty_history() {
