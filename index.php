@@ -133,9 +133,9 @@ function meme_parser_activity() {
         $line = trim(preg_replace('/\s+/u', ' ', $line) ?? $line);
         if ($line === '' || str_starts_with($line, 'PHP Warning:')) continue;
         if (function_exists('mb_strimwidth')) {
-            $line = mb_strimwidth($line, 0, 500, '...', 'UTF-8');
-        } elseif (strlen($line) > 500) {
-            $line = substr($line, 0, 497) . '...';
+            $line = mb_strimwidth($line, 0, 1500, '...', 'UTF-8');
+        } elseif (strlen($line) > 1500) {
+            $line = substr($line, 0, 1497) . '...';
         }
         $activity[] = $line;
     }
@@ -306,6 +306,7 @@ function database_editor_validate_record($database, $collection, $record) {
 function json_response($data, $status = 200): never {
     http_response_code($status);
     header('Content-Type: application/json');
+    if (is_array($data) && !array_is_list($data) && ai_exchange_log()) $data['ai_log'] = ai_exchange_log();
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -516,24 +517,6 @@ function handle_get_current_meme($debug_mode) {
     $meme['captions'] = [$meme['captions'][0] ?? ($meme['text'] ?? '')];
     $meme['source_url'] = source_post_url($meme);
     json_response($meme);
-}
-
-function handle_prepare_vision_preview() {
-    try {
-        $image_data = read_request_image(null, 'Не удалось загрузить изображение для OCR.', 'Не передана ссылка на изображение.');
-        validate_image_bytes($image_data);
-        $ocr_regions = [];
-        $ocr_meta = [];
-        read_image_text_local($image_data, $ocr_regions, false, $ocr_meta);
-        $vision_image = mask_ocr_regions($image_data, $ocr_regions);
-        json_response([
-            'vision_preview' => image_data_uri($vision_image),
-            'ocr_regions_count' => count($ocr_regions),
-            'ocr_diagnostics' => $ocr_meta
-        ]);
-    } catch (Throwable $error) {
-        json_response(['message' => $error->getMessage()], 400);
-    }
 }
 
 function handle_analyze_image($input, $debug_mode) {
@@ -817,7 +800,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         case 'database_update':
         case 'database_delete':
             handle_database_change($action, $input, $debug_mode);
-        case 'prepare_vision_preview': handle_prepare_vision_preview();
         case 'analyze_image': handle_analyze_image($input, $debug_mode);
         case 'debug_reset':
             if ($debug_mode) {

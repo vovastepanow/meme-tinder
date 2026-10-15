@@ -110,7 +110,6 @@ function analyze_image_local($image_data, $history) {
         'is_funny' => parse_bool_flag($assessment['is_funny'] ?? false),
         'ocr' => $ocr,
         'ocr_diagnostics' => $ocr_meta,
-        'vision_preview' => image_data_uri($vision_image),
         'model' => VISION_MODEL . ' + ' . TEXT_MODEL
     ];
 }

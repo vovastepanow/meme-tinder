@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Умная ИИ Мемо-Панель</title>
     <!-- Подключение внешних стилей оформления -->
-    <link rel="stylesheet" href="main-layout.css?v=20261015-8">
-    <link rel="stylesheet" href="components.css?v=20261015-8">
-    <link rel="stylesheet" href="overlays.css?v=20261015-8">
+    <link rel="stylesheet" href="main-layout.css?v=20261015-9">
+    <link rel="stylesheet" href="components.css?v=20261015-9">
+    <link rel="stylesheet" href="overlays.css?v=20261015-9">
 </head>
 <body>
 
@@ -40,19 +40,7 @@
                 <div class="media-shell">
                     <button id="carousel-prev" class="carousel-btn" type="button" aria-label="Предыдущая картинка">‹</button>
                     <div class="img-wrap">
-                        <div class="meme-image-comparison">
-                            <figure class="meme-image-pane">
-                                <figcaption>Оригинал</figcaption>
-                                <img id="meme-image" src="" alt="Мем">
-                            </figure>
-                            <figure class="meme-image-pane">
-                                <figcaption>Вход Moondream · текст закрыт</figcaption>
-                                <div class="meme-vision-preview">
-                                    <img id="meme-vision-image" alt="Изображение для Moondream с закрытыми OCR-областями">
-                                    <span id="meme-vision-status">Подготавливаю OCR-маску...</span>
-                                </div>
-                            </figure>
-                        </div>
+                        <img id="meme-image" src="" alt="Мем">
                     </div>
                     <button id="carousel-next" class="carousel-btn" type="button" aria-label="Следующая картинка">›</button>
                 </div>
@@ -147,10 +135,6 @@
                     <figcaption>Оригинал</figcaption>
                     <div class="test-preview"><img id="test-image" alt="Исходное изображение"></div>
                 </figure>
-                <figure id="test-vision-figure" class="test-image-figure">
-                    <figcaption>Вход Moondream · текст закрыт</figcaption>
-                    <div class="test-preview"><img id="test-vision-image" alt="Изображение для Moondream с закрытыми OCR-областями"></div>
-                </figure>
             </div>
             <div class="test-info">
                 <div class="test-result-heading">
@@ -205,6 +189,6 @@
     </div>
 
     <!-- Подключение изолированной JS-логики интерфейса -->
-    <script src="script.js?v=20261015-8"></script>
+    <script src="script.js?v=20261015-9"></script>
 </body>
 </html>

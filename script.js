@@ -10,10 +10,11 @@ let memePollTimer = null;
 let memeActivityLines = [];
 let parserActivityLines = [];
 let consoleFollowsTail = true;
-const memeVisionPreviewCache = new Map();
 const DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === '1';
 const IMAGE_VIEWER_MAX_ZOOM = 5;
 const IMAGE_VIEWER_CLICK_TOLERANCE = 4;
+const IMAGE_VIEWER_MIN_FILL = 0.7;
+const IMAGE_VIEWER_VISIBLE_EDGE = 60;
 const imageViewerState = { zoom: 1, x: 0, y: 0, drag: null };
 
 function applyImageViewerTransform() {
@@ -23,11 +24,21 @@ function applyImageViewerTransform() {
     image.classList.toggle('is-zoomed', zoom > 1);
 }
 
-/** Keeps the zoomed image from being dragged completely out of the viewport. */
+/** Small images are upscaled to fill at least IMAGE_VIEWER_MIN_FILL of the screen; large ones shrink to fit. */
+function fitImageViewer() {
+    const image = document.getElementById('image-viewer-image');
+    if (!image.naturalWidth || !image.naturalHeight) return;
+    const fit = Math.min((window.innerWidth - 48) / image.naturalWidth, (window.innerHeight - 72) / image.naturalHeight);
+    const scale = Math.min(fit, Math.max(1, fit * IMAGE_VIEWER_MIN_FILL));
+    image.style.width = `${Math.round(image.naturalWidth * scale)}px`;
+    image.style.height = `${Math.round(image.naturalHeight * scale)}px`;
+}
+
+/** Lets the image move freely but keeps at least IMAGE_VIEWER_VISIBLE_EDGE pixels of it on screen. */
 function clampImageViewerOffset() {
     const image = document.getElementById('image-viewer-image');
-    const maxX = Math.max(0, (image.offsetWidth * imageViewerState.zoom - window.innerWidth) / 2 + window.innerWidth * 0.25);
-    const maxY = Math.max(0, (image.offsetHeight * imageViewerState.zoom - window.innerHeight) / 2 + window.innerHeight * 0.25);
+    const maxX = Math.max(0, (window.innerWidth + image.offsetWidth * imageViewerState.zoom) / 2 - IMAGE_VIEWER_VISIBLE_EDGE);
+    const maxY = Math.max(0, (window.innerHeight + image.offsetHeight * imageViewerState.zoom) / 2 - IMAGE_VIEWER_VISIBLE_EDGE);
     imageViewerState.x = Math.max(-maxX, Math.min(maxX, imageViewerState.x));
     imageViewerState.y = Math.max(-maxY, Math.min(maxY, imageViewerState.y));
 }
@@ -43,10 +54,6 @@ function zoomImageViewer(factor, clientX, clientY) {
     imageViewerState.x = pointX - (pointX - imageViewerState.x) * ratio;
     imageViewerState.y = pointY - (pointY - imageViewerState.y) * ratio;
     imageViewerState.zoom = zoom;
-    if (zoom === 1) {
-        imageViewerState.x = 0;
-        imageViewerState.y = 0;
-    }
     clampImageViewerOffset();
     applyImageViewerTransform();
 }
@@ -56,7 +63,11 @@ function openImageViewer(source, altText) {
     const image = document.getElementById('image-viewer-image');
     Object.assign(imageViewerState, { zoom: 1, x: 0, y: 0, drag: null });
     image.alt = altText || 'Просмотр изображения';
+    image.style.width = '';
+    image.style.height = '';
+    image.onload = fitImageViewer;
     image.src = source;
+    if (image.complete) fitImageViewer();
     applyImageViewerTransform();
     viewer.hidden = false;
     document.body.classList.add('image-viewer-open');
@@ -87,6 +98,9 @@ function initializeImageViewer() {
     });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && !viewer.hidden) closeImageViewer();
+    });
+    window.addEventListener('resize', () => {
+        if (!viewer.hidden) fitImageViewer();
     });
     viewer.addEventListener('wheel', event => {
         event.preventDefault();
@@ -135,7 +149,6 @@ function apiUrl(action) {
     const activityLabels = {
         refresh_memes: 'Запущен поиск мемов',
         analyze_image: 'Запущен анализ изображения',
-        prepare_vision_preview: 'Подготовка изображения для анализа',
         suggest_sources: 'Поиск нового источника',
         meme_vote: 'Сохранение оценки мема',
         source_vote: 'Сохранение решения по источнику',
@@ -172,6 +185,10 @@ function appendConsoleLine(message) {
 
 function appendAppLog(message) {
     appendConsoleLine(message);
+}
+
+function logAiExchanges(lines) {
+    (Array.isArray(lines) ? lines : []).forEach(line => appendAppLog(line));
 }
 
 function logOcrDiagnostics(source, diagnostics = {}) {
@@ -291,12 +308,9 @@ function renderMemeSlide() {
     if (active && active.image) {
         img.src = active.image;
         img.style.display = 'block';
-        loadMemeVisionPreview(active.image);
     } else {
         img.removeAttribute('src');
         img.style.display = 'none';
-        document.getElementById('meme-vision-image').removeAttribute('src');
-        document.getElementById('meme-vision-status').textContent = 'Нет изображения';
     }
 
     caption.textContent = active?.text || currentMeme?.text || 'Текст к посту отсутствует';
@@ -312,62 +326,6 @@ function renderMemeSlide() {
         prevBtn.style.visibility = 'visible';
     }
     position.textContent = hasMultiple ? `${currentSlideIndex + 1} / ${slides.length}` : '';
-}
-
-async function loadMemeVisionPreview(imageUrl) {
-    const preview = document.getElementById('meme-vision-image');
-    const status = document.getElementById('meme-vision-status');
-    preview.removeAttribute('src');
-    status.textContent = 'Ищу текст и закрываю его...';
-    try {
-        let request = memeVisionPreviewCache.get(imageUrl);
-        if (!request) {
-            request = (async () => {
-                const body = new FormData();
-                if (imageUrl.startsWith('data:image/')) {
-                    let imageBlob = await (await fetch(imageUrl)).blob();
-                    if (imageBlob.type === 'image/svg+xml') {
-                        const objectUrl = URL.createObjectURL(imageBlob);
-                        try {
-                            const image = new Image();
-                            await new Promise((resolve, reject) => {
-                                image.onload = resolve;
-                                image.onerror = reject;
-                                image.src = objectUrl;
-                            });
-                            const canvas = document.createElement('canvas');
-                            canvas.width = image.naturalWidth;
-                            canvas.height = image.naturalHeight;
-                            canvas.getContext('2d').drawImage(image, 0, 0);
-                            imageBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                        } finally {
-                            URL.revokeObjectURL(objectUrl);
-                        }
-                    }
-                    body.append('image_file', imageBlob, 'meme-preview.png');
-                } else {
-                    body.append('image_url', imageUrl);
-                }
-                const response = await fetch(apiUrl('prepare_vision_preview'), { method: 'POST', body });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
-                return data;
-            })();
-            memeVisionPreviewCache.set(imageUrl, request);
-        }
-        const data = await request;
-        if (currentMemeSlides[currentSlideIndex]?.image !== imageUrl) return;
-        if (data.ocr_diagnostics) logOcrDiagnostics('meme-preview', data.ocr_diagnostics);
-        preview.src = data.vision_preview;
-        status.textContent = data.ocr_regions_count
-            ? `Закрыто областей текста: ${data.ocr_regions_count}`
-            : 'Tesseract не нашёл текстовых областей';
-    } catch (error) {
-        memeVisionPreviewCache.delete(imageUrl);
-        if (currentMemeSlides[currentSlideIndex]?.image === imageUrl) {
-            status.textContent = `Не удалось подготовить копию: ${error.message}`;
-        }
-    }
 }
 
 function changeMemeSlide(delta) {
@@ -715,6 +673,7 @@ async function analyzeTestImage(event) {
 
         const response = await fetch(apiUrl('analyze_image'), { method: 'POST', body });
         const data = await response.json();
+        logAiExchanges(data.ai_log);
         if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
         if (data.ocr_diagnostics) logOcrDiagnostics('image-analysis', data.ocr_diagnostics);
 
@@ -729,13 +688,6 @@ async function analyzeTestImage(event) {
         document.getElementById('test-description').innerHTML = `<strong>ИИ описание:</strong> ${escapeHtml(data.description || 'Описание не получено')}`;
         document.getElementById('test-why-funny').textContent = data.why_funny ? `Почему смешно: ${data.why_funny}` : '';
         document.getElementById('test-is-funny').textContent = `Смешно? ${data.is_funny ? 'Да' : 'Нет'}`;
-        const visionFigure = document.getElementById('test-vision-figure');
-        if (data.vision_preview) {
-            document.getElementById('test-vision-image').src = data.vision_preview;
-            visionFigure.style.display = 'block';
-        } else {
-            visionFigure.style.display = 'none';
-        }
         const ocr = document.getElementById('test-ocr');
         ocr.textContent = data.ocr ? `Текст на изображении: ${data.ocr}` : 'Текст на изображении не распознан';
         document.getElementById('test-result').style.display = 'block';

@@ -88,8 +88,3 @@ function read_request_image($json_input, $upload_error_message, $missing_url_mes
     if ($image_url === '') throw new RuntimeException($missing_url_message);
     return fetch_public_image($image_url);
 }
-
-function image_data_uri($image_data) {
-    $image_info = @getimagesizefromstring($image_data);
-    return 'data:' . ($image_info['mime'] ?? 'image/png') . ';base64,' . base64_encode($image_data);
-}

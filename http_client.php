@@ -42,11 +42,34 @@ function http_post($url, $body, array $options = []) {
     return $result;
 }
 
+/** Collects AI exchange lines for the current HTTP request (returned to the UI as `ai_log`). */
+function ai_exchange_log(?string $line = null): array {
+    static $lines = [];
+    if ($line !== null) $lines[] = $line;
+    return $lines;
+}
+
+/** CLI (parser) prints to its log file, which the UI tails; web requests buffer for json_response. */
+function record_ai_exchange($direction, $model, $text) {
+    $text = trim(preg_replace('/\s+/u', ' ', (string)$text) ?? (string)$text);
+    if (function_exists('mb_strimwidth')) $text = mb_strimwidth($text, 0, 1500, '...', 'UTF-8');
+    $line = "[ИИ {$direction} {$model}] {$text}";
+    if (PHP_SAPI === 'cli') echo $line . "\n";
+    else ai_exchange_log($line);
+}
+
 function ollama_post(array $payload, $timeout) {
-    return http_post(OLLAMA_GENERATE_URL, json_encode($payload), [
+    $model = $payload['model'] ?? '?';
+    $image_count = count($payload['images'] ?? []);
+    record_ai_exchange('→', $model, ($image_count ? "[изображений: {$image_count}] " : '') . ($payload['prompt'] ?? ''));
+    $response = http_post(OLLAMA_GENERATE_URL, json_encode($payload), [
         CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
         CURLOPT_TIMEOUT => $timeout
     ]);
+    $decoded = is_string($response['body']) ? json_decode($response['body'], true) : null;
+    $reply = is_array($decoded) ? ($decoded['response'] ?? $decoded['error'] ?? null) : null;
+    record_ai_exchange('←', $model, $reply ?? ('ошибка: ' . ($response['error'] ?: 'HTTP ' . $response['status'])));
+    return $response;
 }
 
 // Lenient call for the background parser: any failure yields an empty array.

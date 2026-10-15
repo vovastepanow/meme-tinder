@@ -34,7 +34,7 @@ body {
 }
 .activity-console {
     width: min(100%, 900px);
-    height: 230px;
+    height: 320px;
     margin: 0 0 20px;
     box-sizing: border-box;
     overflow: hidden;
@@ -121,7 +121,7 @@ body {
         position: sticky;
         top: 20px;
         width: 100%;
-        height: min(calc(100vh - 40px), 520px);
+        height: calc(100vh - 40px);
         margin: 0;
         z-index: 20;
     }
