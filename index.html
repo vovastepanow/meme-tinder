@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Умная ИИ Мемо-Панель</title>
+    <!-- Подключение внешних стилей оформления -->
+    <link rel="stylesheet" href="style.css?v=20261015-4">
+</head>
+<body>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('meme-tab', this)">🗿 Оценка Мемов</button>
+        <button class="tab-btn" onclick="switchTab('source-tab', this)">🔎 Подбор Источников</button>
+        <button class="tab-btn" onclick="switchTab('test-tab', this)">🧪 Тест ИИ</button>
+        <button class="tab-btn" data-tab-id="database-tab" onclick="switchTab('database-tab', this)">🗄️ Базы данных</button>
+    </div>
+
+    <section id="meme-activity-ticker" class="activity-console" aria-label="Журнал приложения">
+        <div class="activity-console-header"><span class="console-indicator"></span><strong>Журнал приложения</strong><span id="activity-console-status">готово</span><button id="activity-console-follow" type="button" hidden>К концу ↓</button></div>
+        <div id="meme-activity-track" class="activity-console-output" role="log" aria-live="polite"></div>
+    </section>
+
+    <div id="debug-banner" class="debug-banner" style="display: none;">
+        <span>ДЕМО-РЕЖИМ: Ollama не используется, данные не сохраняются в файлы проекта</span>
+        <button type="button" onclick="resetDebugDemo()">Сбросить демо</button>
+    </div>
+
+    <!-- ВКЛАДКА 1: ОЦЕНКА МЕМОВ -->
+    <div id="meme-tab" class="view-panel active">
+        <div id="meme-loading" class="status-msg">Загрузка мема...</div>
+        <div id="meme-error" class="status-msg error-msg" role="alert" style="display: none;"></div>
+        
+        <div id="meme-card-wrapper" style="display: none; width: 100%;">
+            <div class="card">
+                <div class="media-shell">
+                    <button id="carousel-prev" class="carousel-btn" type="button" aria-label="Предыдущая картинка">‹</button>
+                    <div class="img-wrap">
+                        <div class="meme-image-comparison">
+                            <figure class="meme-image-pane">
+                                <figcaption>Оригинал</figcaption>
+                                <img id="meme-image" src="" alt="Мем">
+                            </figure>
+                            <figure class="meme-image-pane">
+                                <figcaption>Вход Moondream · текст закрыт</figcaption>
+                                <div class="meme-vision-preview">
+                                    <img id="meme-vision-image" alt="Изображение для Moondream с закрытыми OCR-областями">
+                                    <span id="meme-vision-status">Подготавливаю OCR-маску...</span>
+                                </div>
+                            </figure>
+                        </div>
+                    </div>
+                    <button id="carousel-next" class="carousel-btn" type="button" aria-label="Следующая картинка">›</button>
+                </div>
+                <div class="slide-caption">
+                    <span id="meme-slide-caption"></span>
+                    <span id="meme-slide-position" class="slide-position"></span>
+                </div>
+                <div class="info">
+                    <span id="meme-rating" class="badge">🔮 0%</span>
+                    <div id="meme-source" class="source-text">📍 Источник: --</div>
+                    <a id="meme-source-link" class="source-post-link" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a>
+                    <div id="meme-why-funny" class="meme-ai-note"><strong>Почему смешно:</strong> <span></span></div>
+                    <span id="meme-is-funny" class="meme-funny-badge">Смешно? --</span>
+                    <div id="meme-desc" class="desc-text"><strong>ИИ Описание:</strong> --</div>
+                </div>
+            </div>
+            <div class="controls">
+                <button class="btn btn-wrong" onclick="voteMeme('wrong')" title="Не по теме">❌</button>
+                <button class="btn" onclick="voteMeme('dislike')" title="Треш">💩</button>
+                <button class="btn" onclick="voteMeme('maybe')" title="Не знаю">🤷‍♂️</button>
+                <button class="btn" onclick="voteMeme('like')" title="Годно">🗿</button>
+            </div>
+        </div>
+        
+        <div id="meme-empty" class="status-msg meme-empty" style="display: none;">
+            <span id="meme-empty-message">Пул мемов пуст.</span>
+            <div class="meme-empty-actions">
+                <button id="meme-search-button" class="meme-add-button" type="button">Найти мемы</button>
+                <button class="meme-add-button secondary" type="button" onclick="openEmptyMemeEditor()">Добавить мем</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ВКЛАДКА 2: ПОДБОР ИСТОЧНИКОВ -->
+    <div id="source-tab" class="view-panel">
+        <div class="source-actions">
+            <label class="source-platform-filter" for="source-platform">
+                <span>Платформа</span>
+                <select id="source-platform">
+                    <option value="any">Все источники</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="vk">ВКонтакте</option>
+                    <option value="dvach">Двач</option>
+                </select>
+            </label>
+            <button class="tab-btn search-trigger" onclick="findNewSources()">🔎 Найти новый источник</button>
+            <div class="vk-auth-actions">
+                <button id="vk-oauth-button" class="vk-oauth-button" type="button" onclick="startVkOAuth()">Подключить VK</button>
+                <span id="vk-oauth-status" role="status">Проверяю подключение VK...</span>
+            </div>
+        </div>
+        <div id="source-loading" class="status-msg" style="display:none;">Ищу источники...</div>
+        <div id="source-error" class="status-msg error-msg" role="alert" style="display:none;"></div>
+        
+        <div id="source-inspection-zone" style="display: none; margin-top: 20px; width: 100%; flex-direction: column; align-items: center;">
+            <div class="source-meta">
+                <h3 id="inspect-source-name">Загрузка...</h3>
+                <span id="inspect-source-reason">Причина...</span>
+            </div>
+            
+            <!-- Сетка-плитка для динамического рендеринга 4 постов сообщества -->
+            <div id="posts-grid" class="grid-container"></div>
+            
+            <div class="controls" style="max-width: 200px; justify-content: center; gap: 20px;">
+                <button class="btn btn-action-reject" onclick="voteSource('reject')">💩</button>
+                <button class="btn btn-action-approve" onclick="voteSource('approve')">🗿</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ВКЛАДКА 3: ТЕСТ ОЦЕНКИ ИЗОБРАЖЕНИЯ -->
+    <div id="test-tab" class="view-panel test-panel">
+        <form id="analyze-form" class="analyze-form">
+            <label class="field-label" for="image-url">Ссылка на изображение</label>
+            <div class="url-input-row">
+                <input id="image-url" name="image_url" type="url" placeholder="https://example.com/meme.jpg" autocomplete="url">
+                <button id="analyze-button" class="analyze-button" type="submit">Оценить</button>
+            </div>
+            <div class="form-divider"><span>или выберите файл</span></div>
+            <label class="file-picker" for="image-file">
+                <span>Выбрать изображение</span>
+                <input id="image-file" name="image_file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp">
+            </label>
+            <div class="field-hint">JPEG, PNG, GIF, WebP или BMP. Максимум 10 МБ.</div>
+        </form>
+
+        <div id="test-error" class="status-msg error-msg" role="alert" style="display:none;"></div>
+        <div id="test-loading" class="status-msg" role="status" style="display:none;">ИИ анализирует изображение...</div>
+        <section id="test-result" class="test-result" aria-live="polite" style="display:none;">
+            <div class="test-image-comparison">
+                <figure class="test-image-figure">
+                    <figcaption>Оригинал</figcaption>
+                    <div class="test-preview"><img id="test-image" alt="Исходное изображение"></div>
+                </figure>
+                <figure id="test-vision-figure" class="test-image-figure">
+                    <figcaption>Вход Moondream · текст закрыт</figcaption>
+                    <div class="test-preview"><img id="test-vision-image" alt="Изображение для Moondream с закрытыми OCR-областями"></div>
+                </figure>
+            </div>
+            <div class="test-info">
+                <div class="test-result-heading">
+                    <h2>Оценка мемности</h2>
+                    <span id="test-rating" class="badge">🔮 0%</span>
+                </div>
+                <div id="test-model" class="source-text"></div>
+                <div id="test-description" class="desc-text"></div>
+                <div id="test-why-funny" class="meme-ai-note"></div>
+                <span id="test-is-funny" class="meme-funny-badge"></span>
+                <div id="test-ocr" class="test-ocr"></div>
+            </div>
+        </section>
+    </div>
+
+    <!-- ВКЛАДКА 4: РЕДАКТОР БАЗ ДАННЫХ -->
+    <div id="database-tab" class="view-panel database-panel">
+        <div class="database-toolbar">
+            <label>
+                <span>База</span>
+                <select id="database-select"></select>
+            </label>
+            <label>
+                <span>Коллекция</span>
+                <select id="database-collection-select"></select>
+            </label>
+            <button id="database-add" class="database-add-button" type="button">＋ Добавить запись</button>
+            <button id="database-refresh" class="database-refresh" type="button" title="Обновить список" aria-label="Обновить список">↻</button>
+        </div>
+        <div id="database-status" class="database-status" role="status">Выберите базу для просмотра записей.</div>
+        <div id="database-records" class="database-records"></div>
+
+        <dialog id="database-edit-dialog" class="database-edit-dialog">
+            <form id="database-edit-form">
+                <h2 id="database-dialog-title">Редактировать запись</h2>
+                <label for="database-record-json">Данные записи (JSON)</label>
+                <textarea id="database-record-json" spellcheck="false" required></textarea>
+                <div class="database-dialog-actions">
+                    <button class="database-cancel" type="button" id="database-cancel">Отмена</button>
+                    <button class="database-save" type="submit">Сохранить</button>
+                </div>
+            </form>
+        </dialog>
+    </div>
+
+    <div id="image-viewer" class="image-viewer" role="dialog" aria-label="Просмотр изображения" hidden>
+        <div id="image-viewer-header" class="image-viewer-header">
+            <span id="image-viewer-title">Просмотр изображения</span>
+            <button id="image-viewer-close" class="image-viewer-close" type="button" aria-label="Закрыть просмотр">×</button>
+        </div>
+        <div class="image-viewer-viewport"><img id="image-viewer-image" alt=""></div>
+    </div>
+
+    <!-- Подключение изолированной JS-логики интерфейса -->
+    <script src="script.js?v=20261015-4"></script>
+</body>
+</html>

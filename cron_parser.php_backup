@@ -1,0 +1,225 @@
+<?php
+// cron_parser.php
+$pool_file = __DIR__ . '/memes_pool.json';
+$history_file = __DIR__ . '/meme_history.json';
+$sources_file = __DIR__ . '/sources_db.json';
+
+function load_data($file, $default = []) {
+    if (!is_file($file)) return $default;
+    $data = json_decode(file_get_contents($file), true);
+    return is_array($data) ? $data : $default;
+}
+
+function request_url($url) {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_USERAGENT => 'MemeTinder/1.0'
+    ]);
+    $res = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return $res !== false && $status >= 200 && $status < 300 ? $res : false;
+}
+
+// Переводчик через Qwen
+function translate_to_russian_local($english_text) {
+    if (empty($english_text) || $english_text === "Нет описания") return "Нет описания";
+    $prompt = "Переведи описание картинки на русский язык. Выдай ТОЛЬКО текст перевода, без лишних слов:\n" . $english_text;
+    $payload = ["model" => "qwen2.5:3b", "prompt" => $prompt, "stream" => false];
+    
+    $ch = curl_init("http://localhost:11434/api/generate");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json']
+    ]);
+    $res = json_decode(curl_exec($ch), true);
+    curl_close($ch);
+    return trim($res['response'] ?? $english_text);
+}
+
+// ИИ-очистка текста Tesseract
+function clean_ocr_text_local($raw_ocr) {
+    if (strlen($raw_ocr) < 3) return "";
+    $prompt = "Очисти текст от мусора распознавания символов (типа |, _, ~, скачущие буквы). Если есть слова, верни их. Если только мусор, верни пустую строку. Выдай ТОЛЬКО результат:\n" . $raw_ocr;
+    $payload = ["model" => "qwen2.5:3b", "prompt" => $prompt, "stream" => false];
+    
+    $ch = curl_init("http://localhost:11434/api/generate");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json']
+    ]);
+    $res = json_decode(curl_exec($ch), true);
+    curl_close($ch);
+    return trim($res['response'] ?? "");
+}
+
+// Интеллектуальный фильтр флуда из /b/
+function is_it_a_meme_local($text_context, $visual_desc) {
+    $prompt = "Проанализируй контент из /b/. Это мем, прикол, шутка, демотиватор или смешной комикс? Оцени вероятность от 0 до 100. Выдай ТОЛЬКО ОДНО ЧИСЛО процентов:\n" . $text_context . " " . $visual_desc;
+    $payload = ["model" => "qwen2.5:3b", "prompt" => $prompt, "stream" => false];
+    
+    $ch = curl_init("http://localhost:11434/api/generate");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json']
+    ]);
+    $res = json_decode(curl_exec($ch), true);
+    curl_close($ch);
+    
+    $rating = (int)trim($res['response'] ?? "0");
+    return ($rating >= 40); // Пропускаем только явный юмор и приколы
+}
+
+function get_ai_rating_local($desc, $history) {
+    $liked = array_slice(array_column($history['liked_memes'] ?? [], 'text'), -15);
+    $disliked = array_slice(array_column($history['disliked_memes'] ?? [], 'text'), -15);
+    
+    $prompt = "Вкусы пользователя:\nЛАЙКИ: " . json_encode($liked, JSON_UNESCAPED_UNICODE) . "\nДИЗЛАЙКИ: " . json_encode($disliked, JSON_UNESCAPED_UNICODE) . "\n\n" .
+              "Оцени мем от 0 до 100 на основе вкусов: " . $desc . "\nВыдай ТОЛЬКО число процентов.";
+              
+    $payload = ["model" => "qwen2.5:3b", "prompt" => $prompt, "stream" => false];
+    
+    $ch = curl_init("http://localhost:11434/api/generate");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json']
+    ]);
+    $res = json_decode(curl_exec($ch), true);
+    curl_close($ch);
+    return (int)trim($res['response'] ?? "50");
+}
+
+function parse_dvach($board) {
+    if (!preg_match('/^[a-z0-9_-]{1,30}$/i', $board)) return [];
+    $json_raw = request_url('https://2ch.hk' . rawurlencode($board) . '/catalog.json');
+    if (!$json_raw) return [];
+    $res = json_decode($json_raw, true);
+    $output = [];
+    if (empty($res['threads']) || !is_array($res['threads'])) return [];
+    
+    foreach ($res['threads'] as $t) {
+        if (!isset($t['files']) || !is_array($t['files'])) continue;
+        $file = $t['files'];
+        $path = $file['path'] ?? '';
+        $path_pattern = '#^/' . preg_quote($board, '#') . '/src/[0-9]+/[^/]+\.(?:jpe?g|png|gif|webp)$#i';
+        if (!preg_match($path_pattern, $path)) continue;
+        
+        $text = html_entity_decode(strip_tags($t['subject'] ?? $t['comment'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = preg_replace('/\s+/u', ' ', trim($text));
+        
+        $output[] = [
+            'source' => 'Двач /' . $board . '/', 
+            'image' => 'https://2ch.hk' . $path, 
+            'text' => $text
+        ];
+    }
+    return $output;
+}
+
+// Загрузка кэша и сквозная фильтрация повторов
+$history = load_data($history_file, ['liked_memes' => [], 'disliked_memes' => [], 'undecided_memes' => [], 'wrong_topic_memes' => []]);
+$final_pool = load_data($pool_file, []);
+
+$seen_images = array_merge(
+    array_column($final_pool, 'image'),
+    array_column($history['liked_memes'] ?? [], 'image'),
+    array_column($history['disliked_memes'] ?? [], 'image'),
+    array_column($history['undecided_memes'] ?? [], 'image'),
+    array_column($history['wrong_topic_memes'] ?? [], 'image')
+);
+
+// Возвращаем легендарный /b/ и /cc/ для разнообразия
+$sources = load_data($sources_file, ['2ch_boards' => ['b', 'cc']]);
+$boards = $sources['2ch_boards'] ?? ['b', 'cc'];
+
+$all_memes = [];
+foreach ($boards as $board) {
+    echo "Парсинг каталога /" . $board . "/...\n";
+    $all_memes = array_merge($all_memes, parse_dvach($board));
+}
+
+$unique_memes = [];
+foreach ($all_memes as $meme) {
+    if (in_array($meme['image'], $seen_images)) continue;
+    $unique_memes[$meme['image']] = $meme;
+}
+$all_memes = array_values($unique_memes);
+shuffle($all_memes);
+$all_memes = array_slice($all_memes, 0, 45); // Расширенная выборка кандидатов из-за жесткого фильтра /b/
+
+echo "Отобрано " . count($all_memes) . " свежих кандидатов из /b/ и /cc/ для ИИ-анализа.\n";
+
+$added_in_this_session = 0;
+foreach ($all_memes as $m) {
+    if (count($final_pool) >= 12 || $added_in_this_session >= 8) break;
+
+    echo "Анализ медиа [{$m['source']}]...\n";
+    $img_data = request_url($m['image']);
+    if (!$img_data) continue;
+    
+    $tmp_img = tempnam(sys_get_temp_dir(), 'meme_');
+    file_put_contents($tmp_img, $img_data);
+    $img_base64 = base64_encode($img_data);
+
+    // 1. Tesseract OCR
+    $tmp_out = tempnam(sys_get_temp_dir(), 'txt_');
+    $command = "tesseract " . escapeshellarg($tmp_img) . " " . escapeshellarg($tmp_out) . " -l rus+eng --psm 11 2>&1";
+    exec($command);
+    
+    $result_file = $tmp_out . ".txt";
+    $raw_ocr = is_file($result_file) ? file_get_contents($result_file) : "";
+    @unlink($result_file); @unlink($tmp_out);
+    $tesseract_text = clean_ocr_text_local($raw_ocr);
+
+    // 2. Moondream английское описание
+    $payload = [
+        "model" => "moondream",
+        "prompt" => "Describe the visual joke, actions, and objects in this image. Do not transcribe any text.",
+        "stream" => false, "images" => [$img_base64]
+    ];
+    $ch = curl_init("http://localhost:11434/api/generate");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json']
+    ]);
+    $res = json_decode(curl_exec($ch), true);
+    curl_close($ch);
+    
+    // Перевод силами Qwen на лету
+    $raw_english_desc = $res['response'] ?? "Нет описания";
+    $m['ai_description'] = translate_to_russian_local($raw_english_desc);
+
+    @unlink($tmp_img);
+
+    // 3. Фильтрация флуда
+    if (!is_it_a_meme_local($m['text'] . " " . $tesseract_text, $m['ai_description'])) {
+        echo "-> ИИ отфильтровал флуд/фотографию.\n";
+        continue;
+    }
+
+    echo "-> Одобрено! Рассчитываем рейтинг годноты...\n";
+    $full_context = "Инфо треда: " . $m['text'] . " | Текст на мемчике: " . $tesseract_text . " | Графика: " . $m['ai_description'];
+    $m['rating'] = get_ai_rating_local($full_context, $history);
+    
+    if (!empty($tesseract_text)) {
+        $m['ai_description'] .= " <br><br><strong>Текст на картинке:</strong> " . $tesseract_text;
+    }
+    
+    $final_pool[] = $m;
+    $added_in_this_session++;
+
+    usort($final_pool, function($a, $b) { return $b['rating'] <=> $a['rating']; });
+    file_put_contents($pool_file, json_encode($final_pool, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+    echo "[!] Мем сохранен на диск и выведен на сайт.\n";
+}
+echo "Сбор полностью завершен!\n";

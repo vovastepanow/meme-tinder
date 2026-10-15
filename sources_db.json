@@ -1,0 +1,151 @@
+{
+    "2ch_boards": [
+        "b",
+        "me",
+        "pr",
+        "r",
+        "cc",
+        "a",
+        "mu",
+        "d",
+        "s",
+        "b2"
+    ],
+    "vk_publics": [
+        {
+            "id": "mrzlk",
+            "name": "MDK"
+        },
+        {
+            "id": "leprum",
+            "name": "Лепрекон"
+        },
+        {
+            "id": "sci_one",
+            "name": "Умный Юмор"
+        },
+        {
+            "id": "british_humor",
+            "name": "БРИТИШ ЮМОР"
+        },
+        {
+            "id": "bessm_humor",
+            "name": "ОВСЯНКА, СЭР!"
+        },
+        {
+            "id": "memes_2024",
+            "name": "Мемы на каждый день"
+        }
+    ],
+    "telegram_channels": [
+        {
+            "id": "memesdaily",
+            "name": "Мемы каждый день"
+        },
+        {
+            "id": "this_is_not_funny",
+            "name": "Это не смешно"
+        },
+        {
+            "id": "humorhub",
+            "name": "Humor Hub"
+        },
+        {
+            "id": "trashmemes",
+            "name": "Trash memes"
+        },
+        {
+            "id": "russmemes",
+            "name": "Русские мемы"
+        },
+        {
+            "id": "memechi",
+            "name": "Meme Chi"
+        }
+    ],
+    "source_votes": [
+        {
+            "source_id": "test:1",
+            "vote": "approve"
+        },
+        {
+            "source_id": "dvach:s:3726498",
+            "platform": "Двач",
+            "name": "Двач \/s\/ · тред #3726498",
+            "vote": "approve",
+            "timestamp": 1792035658,
+            "thread_id": "3726498",
+            "board": "s"
+        },
+        {
+            "source_id": "dvach:cc:1356504",
+            "platform": "Двач",
+            "name": "Двач \/cc\/ · тред #1356504",
+            "vote": "approve",
+            "timestamp": 1792035674,
+            "thread_id": "1356504",
+            "board": "cc"
+        },
+        {
+            "source_id": "dvach:b:337419778",
+            "platform": "Двач",
+            "name": "Двач \/b\/ · тред #337419778",
+            "vote": "approve",
+            "timestamp": 1792036517,
+            "thread_id": "337419778",
+            "board": "b"
+        },
+        {
+            "source_id": "dvach:me:1684032",
+            "platform": "Двач",
+            "name": "Двач \/me\/ · тред #1684032",
+            "vote": "reject",
+            "timestamp": 1792036560,
+            "thread_id": "1684032",
+            "board": "me"
+        },
+        {
+            "source_id": "dvach:pr:3767498",
+            "platform": "Двач",
+            "name": "Двач \/pr\/ · тред #3767498",
+            "vote": "reject",
+            "timestamp": 1792039595,
+            "thread_id": "3767498",
+            "board": "pr"
+        },
+        {
+            "source_id": "telegram:humorhub",
+            "platform": "Telegram",
+            "name": "Telegram | Humor Hub",
+            "vote": "approve",
+            "timestamp": 1792042973
+        },
+        {
+            "source_id": "dvach:s:3612983",
+            "platform": "Двач",
+            "name": "Двач \/s\/ · тред #3612983",
+            "vote": "reject",
+            "timestamp": 1792053350,
+            "thread_id": "3612983",
+            "board": "s"
+        },
+        {
+            "source_id": "dvach:mu:2016872",
+            "platform": "Двач",
+            "name": "Двач \/mu\/ · тред #2016872",
+            "vote": "reject",
+            "timestamp": 1792053409,
+            "thread_id": "2016872",
+            "board": "mu"
+        },
+        {
+            "source_id": "dvach:mu:2009725",
+            "platform": "Двач",
+            "name": "Двач \/mu\/ · тред #2009725",
+            "vote": "reject",
+            "timestamp": 1792053426,
+            "thread_id": "2009725",
+            "board": "mu"
+        }
+    ]
+}
