@@ -3,7 +3,8 @@
 function http_get($url, array $options = []) {
     $ch = curl_init($url);
     curl_setopt_array($ch, $options + [
-        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_RETURNTRANSFER => false,
+        CURLOPT_BINARYTRANSFER => true,
         CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_TIMEOUT => 15,
         CURLOPT_FOLLOWLOCATION => true,
@@ -26,7 +27,8 @@ function http_get_json($url, array $options = []) {
 function http_post($url, $body, array $options = []) {
     $ch = curl_init($url);
     curl_setopt_array($ch, $options + [
-        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_RETURNTRANSFER => false,
+        CURLOPT_BINARYTRANSFER => true,
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => $body,
         CURLOPT_CONNECTTIMEOUT => 5,

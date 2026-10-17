@@ -2,6 +2,16 @@
 
 // Shared AI analysis: OCR cleanup, scene description, meme scoring.
 
+// ---- Logging helper ----
+function debug_log($message, $context = [])
+{
+    $log = "[$message]";
+    if (!empty($context)) {
+        $log .= ' Context: ' . json_encode($context);
+    }
+    echo $log . PHP_EOL;
+}
+
 function normalize_text_lower($value) {
     $value = trim((string)$value);
     if ($value === '') return '';
@@ -20,58 +30,128 @@ function history_taste_texts($history, $collection, $limit = 15) {
     return array_slice(array_column($history[$collection] ?? [], 'text'), -$limit);
 }
 
-// ИИ-очистка текста Tesseract
-function clean_ocr_text_local($raw_ocr) {
-    if (strlen($raw_ocr) < 3) return "";
-    $prompt = "Очисти текст от мусора распознавания символов (типа |, _, ~, скачущие буквы). Если есть осмысленные слова, верни их. Если только технический мусор, верни пустую строку. Выдай ТОЛЬКО результат:\n" . $raw_ocr;
+// ИИ-очистка текста через Qwen3.5 vision model
+function clean_ocr_text_local($ocr_text)
+{
+    debug_log('clean_ocr_text_local: starting', ['raw_length' => strlen($ocr_text)]);
+    if (strlen($ocr_text) < 3) {
+        debug_log('clean_ocr_text_local: early return (short input)', ['raw' => substr($ocr_text, 0, 50)]);
+        return "";
+    }
+    $prompt = "Исправь очевидные ошибки OCR в короткой надписи. Сохрани язык и знаки препинания, не заменяй кириллицу латиницей. Не переводи и не добавляй слова. Удали только явные повторы; если фрагмент неразборчив, оставь как есть. Верни одну строку с исправленным текстом:\n" . $ocr_text;
     $res = generate_local(["model" => TEXT_MODEL, "prompt" => $prompt, "stream" => false]);
-    return trim($res['response'] ?? "");
+    $cleaned = trim($res['response'] ?? "");
+    debug_log('clean_ocr_text_local: completed', ['raw_length' => strlen($ocr_text), 'cleaned_length' => strlen($cleaned)]);
+    return $cleaned;
 }
 
-function read_image_text_local($image_data, &$best_regions = null, $clean_text = true, &$ocr_meta = null) {
-    $best_regions = [];
-    $ocr_meta = ['status' => 'unavailable', 'text' => '', 'regions' => [], 'rejected' => []];
-    if (!function_exists('exec')) return '';
-    $input_file = tempnam(sys_get_temp_dir(), 'meme_test_');
-    if ($input_file === false) return '';
-    file_put_contents($input_file, $image_data);
-    $ocr_passes = [[$input_file, 1.0]];
-    $image_info = @getimagesizefromstring($image_data);
-    $upscaled = prepare_upscaled_ocr_image($image_data, $image_info);
-    if ($upscaled) $ocr_passes[] = $upscaled;
-
-    $candidates = [];
-    foreach ($ocr_passes as [$ocr_file, $coordinate_scale]) {
-        foreach ([6, 11] as $page_mode) {
-            $candidates[] = run_tesseract_pass($ocr_file, $page_mode, $coordinate_scale);
-        }
+function read_image_text_local($image_data, &$best_regions = null, $clean_text = true, &$ocr_meta = null)
+{
+    debug_log('read_image_text_local: starting', ['image_size' => strlen($image_data)]);
+    if ($best_regions === null) {
+        $best_regions = [];
     }
-    foreach ($ocr_passes as [$ocr_file]) @unlink($ocr_file);
-
-    $best = select_consensus_tesseract_candidate($candidates);
-    $best_regions = $best['regions'];
+    if ($ocr_meta === null) {
+        $ocr_meta = [];
+    }
+    
+    // Проверка: достаточно ли данных для vision-модели
+    if (strlen($image_data) < 1024) {
+        debug_log('read_image_text_local: early return (too small image)');
+        $ocr_meta['status'] = 'no-text';
+        $ocr_meta['text'] = '';
+        $ocr_meta['regions'] = [];
+        $ocr_meta['image_width'] = 0;
+        $ocr_meta['image_height'] = 0;
+        $ocr_meta['description'] = '';
+        return '';
+    }
+    
+    $image_info = @getimagesizefromstring($image_data);
+    if (!$image_info) {
+        debug_log('read_image_text_local: early return (invalid image format)');
+        $ocr_meta['status'] = 'unavailable';
+        $ocr_meta['text'] = '';
+        $ocr_meta['regions'] = [];
+        $ocr_meta['image_width'] = 0;
+        $ocr_meta['image_height'] = 0;
+        $ocr_meta['description'] = '';
+        return '';
+    }
+    
+    $image_width = (int)$image_info[0];
+    $image_height = (int)$image_info[1];
+    
+    // Формируем prompt для Qwen3.5 vision модели
+    $vision_prompt = "Проанализируй изображение и извлеки текст. Найди все текстовые регионы и верни JSON в формате:
+{
+    \"text\": \"полный текст всех найденных фрагментов в одном строке\",
+    \"regions\": [
+        {\"left\": <int>, \"top\": <int>, \"width\": <int>, \"height\": <int>, \"text\": \"<текст фрагмента>\"},
+        ...
+    ],
+    \"description\": \"короткое описание сцены в 1-2 предложениях\",
+    \"has_text\": <true|false>
+}.
+Важно: верни текст в поле \"text\" и также в каждом регионе из \"regions\". Если текста нет или он очень мал, установи \"text\": \"\" и \"has_text\": false.
+Изображение передается в поле \"image\".
+";
+    
+    $result = generate_local([
+        'model' => VISION_MODEL,
+        'prompt' => $vision_prompt,
+        'stream' => false,
+        'format' => 'json',
+        'images' => [$image_data],
+        'options' => ['temperature' => 0.1]
+    ]);
+    
+    $json_result = (is_array($result) ? $result : $result);
+    
+    // Извлекаем текст и регионы из ответа vision модели
+    $text_raw = ($json_result['text'] ?? '');
+    $regions_raw = ($json_result['regions'] ?? []);
+    $description = ($json_result['description'] ?? '');
+    $has_text = ($json_result['has_text'] ?? false);
+    
+    // Нормализуем регионы: сортируем слева направо
+    if (!empty($regions_raw)) {
+        usort($regions_raw, function($a, $b) {
+            $a_center = $a['left'] + $a['width'] / 2;
+            $b_center = $b['left'] + $b['width'] / 2;
+            return $a_center <=> $b_center;
+        });
+        $best_regions = $regions_raw;
+    }
+    
+    // Очищаем текст, если требуется
+    $final_text = '';
+    if ($clean_text && !empty($text_raw)) {
+        $cleaned = clean_ocr_text_local($text_raw);
+        $final_text = trim($cleaned);
+    } else {
+        $final_text = trim($text_raw);
+    }
+    
+    // Собираем метаданные
     $ocr_meta = [
-        'status' => $best['word_count']
-            ? 'text-found'
-            : (!empty($best['raw_word_count']) && empty($best['consensus_confirmed']) ? 'unconfirmed' : 'no-text'),
-        'consensus_confirmed' => $best['consensus_confirmed'] ?? false,
-        'image_width' => (int)($image_info[0] ?? 0),
-        'image_height' => (int)($image_info[1] ?? 0),
-        'psm' => $best['psm'] ?? null,
-        'scale' => $best['scale'] ?? 1,
-        'raw_word_count' => $best['raw_word_count'],
-        'word_count' => $best['word_count'],
-        'line_count' => $best['line_count'],
-        'confidence' => $best['confidence'],
-        'text' => $best['text'],
+        'status' => empty($final_text) ? 'no-text' : 'text-found',
+        'text' => $final_text,
         'regions' => $best_regions,
-        'rejected' => $best['rejected']
+        'image_width' => $image_width,
+        'image_height' => $image_height,
+        'description' => trim($description),
+        'has_text' => !empty($final_text),
     ];
-    if (ocr_text_length($best['text']) < 3) return '';
-    if (!$clean_text) return $best['text'];
-    $cleaned = ai_generate_local(TEXT_MODEL, "Исправь очевидные ошибки OCR в короткой надписи. Сохрани язык и знаки препинания, не заменяй кириллицу латиницей. Не переводи и не добавляй слова. Удали только явные повторы; если фрагмент неразборчив, оставь как есть. Верни одну строку с исправленным текстом:\n" . $best['text']);
-    $ocr_meta['cleaned_text'] = $cleaned !== '' ? $cleaned : $best['text'];
-    return $ocr_meta['cleaned_text'];
+    
+    // Логируем результат
+    debug_log('read_image_text_local: completed', [
+        'status' => $ocr_meta['status'],
+        'cleaned_length' => ocr_text_length($final_text),
+        'region_count' => count($best_regions),
+    ]);
+    
+    return $ocr_meta;
 }
 
 function analyze_image_local($image_data, $history) {
@@ -84,13 +164,20 @@ function analyze_image_local($image_data, $history) {
     $region_list = array_map(function($region) {
         return ['left' => $region['left'], 'top' => $region['top'], 'width' => $region['width'], 'height' => $region['height']];
     }, $ocr_regions);
-    $vision_prompt = "Tesseract found text in the image. Its detected regions are covered by solid dark rectangles with orange outlines. " .
-        "The image is {$image_info[0]}x{$image_info[1]} pixels. Detected text boxes (left, top, width, height): " .
-        json_encode($region_list) . ". Do not read, transcribe, infer, reconstruct, or guess any text, including text inside or outside the marked regions. " .
-        "Ignore the marked rectangles completely. Describe only the non-text scene in 3 to 5 complete sentences, around 50 to 80 words. Include concrete objects, expressions, actions, spatial relationships, and relevant visual context. Do not infer hidden text or invent details.";
-    $description = ai_generate_local(VISION_MODEL, $vision_prompt, [base64_encode($vision_image)]);
-    if ($description === '') throw new RuntimeException('Модель не смогла описать изображение.');
-
+    
+    // Если OCR нашел текст, используем описание сцены из vision модели
+    if (!empty($ocr_meta['description'])) {
+        $description = $ocr_meta['description'];
+    } elseif ($image_info) {
+        $vision_prompt = "Tesseract found text in the image. Its detected regions are covered by solid dark rectangles with orange outlines. " .
+            "The image is {$image_info[0]}x{$image_info[1]} pixels. Detected text boxes (left, top, width, height): " .
+            json_encode($region_list) . ". Do not read, transcribe, infer, reconstruct, or guess any text, including text inside or outside the marked regions. " .
+            "Ignore the marked rectangles completely. Describe only the non-text scene in 3 to 5 complete sentences, around 50 to 80 words. Include concrete objects, expressions, actions, spatial relationships, and relevant visual context. Do not infer hidden text or invent details.";
+        $description = ai_generate_local(VISION_MODEL, $vision_prompt, [base64_encode($vision_image)]);
+    } else {
+        $description = 'Без описания сцены.';
+    }
+    
     $liked = history_taste_texts($history, 'liked_memes');
     $disliked = history_taste_texts($history, 'disliked_memes');
     $prompt = "Оцени мем и верни только JSON: {\"meme_probability\":0,\"rating\":0,\"description\":\"подробное описание сцены в 2-4 предложениях\",\"why_funny\":\"короткое объяснение\",\"is_funny\":false}.\n" .

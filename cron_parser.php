@@ -187,15 +187,14 @@ function analyze_parser_candidate($m, $history) {
     $img_data = http_get($m['image']);
     if (!$img_data) return null;
 
-    $tmp_img = tempnam(sys_get_temp_dir(), 'meme_');
-    file_put_contents($tmp_img, $img_data);
-    $ocr_result = ocr_image_for_parser($tmp_img);
-    $raw_ocr = $ocr_result['text'];
-    $ocr_regions = $ocr_result['regions'];
-    $tesseract_text = $raw_ocr !== '' ? clean_ocr_text_local($raw_ocr) : '';
-    echo "[OCR] selected PSM {$ocr_result['psm']} scale={$ocr_result['scale']} confirmed=" . ($ocr_result['consensus_confirmed'] ? 'yes' : 'no') . " confidence={$ocr_result['confidence']}: raw=\"{$raw_ocr}\", cleaned=\"{$tesseract_text}\", boxes=" . implode(';', array_map('ocr_box_label', $ocr_regions)) . "\n";
-    $raw_english_desc = describe_scene_for_parser(base64_encode(blur_ocr_regions($img_data, $ocr_regions)));
-    @unlink($tmp_img);
+    // Use Qwen3.5 Vision pipeline for text extraction
+    $ocr_result = read_image_text_local($img_data);
+    $tesseract_text = $ocr_result;
+    $ocr_regions = $ocr_result && is_array($ocr_result) && isset($ocr_result['regions']) ? $ocr_result['regions'] : [];
+    $raw_english_desc = $ocr_result && is_array($ocr_result) && isset($ocr_result['description']) ? $ocr_result['description'] : '';
+    
+    $raw_ocr = $tesseract_text; // For backward compatibility in logging
+    echo "[OCR] Qwen3.5 Vision: extracted text length=" . strlen($raw_ocr) . ", regions count=" . count($ocr_regions) . ", description length=" . strlen($raw_english_desc) . "\n";
 
     $post_text_for_ai = str_starts_with((string)($m['source'] ?? ''), 'Двач /') ? '' : (string)($m['text'] ?? '');
     $rule_score = get_meme_rule_score_local($post_text_for_ai . ' ' . $tesseract_text, $raw_english_desc);

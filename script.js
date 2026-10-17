@@ -942,7 +942,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     document.getElementById('analyze-form').addEventListener('submit', analyzeTestImage);
-        document.getElementById('meme-search-button').addEventListener('click', searchForMemes);
+    document.getElementById('meme-search-button').addEventListener('click', searchForMemes);
     document.getElementById('database-select').addEventListener('change', loadDatabaseCollections);
     document.getElementById('database-collection-select').addEventListener('change', loadDatabaseRecords);
     document.getElementById('database-refresh').addEventListener('click', loadDatabaseRecords);

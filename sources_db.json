@@ -146,6 +146,15 @@
             "timestamp": 1792053426,
             "thread_id": "2009725",
             "board": "mu"
+        },
+        {
+            "source_id": "dvach:cc:1357520",
+            "platform": "Двач",
+            "name": "Двач \/cc\/ · тред #1357520",
+            "vote": "approve",
+            "timestamp": 1792142788,
+            "thread_id": "1357520",
+            "board": "cc"
         }
     ]
 }

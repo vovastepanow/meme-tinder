@@ -6,8 +6,8 @@ const SOURCES_FILE = __DIR__ . '/sources_db.json';
 const PARSER_SCRIPT = __DIR__ . '/cron_parser.php';
 
 const OLLAMA_GENERATE_URL = 'http://localhost:11434/api/generate';
-const TEXT_MODEL = 'qwen2.5:3b';
-const VISION_MODEL = 'moondream';
+const TEXT_MODEL = 'qwen3.5-vision:latest';
+const VISION_MODEL = 'qwen3.5-vision:latest';
 
 const HISTORY_COLLECTIONS = ['liked_memes', 'disliked_memes', 'undecided_memes', 'wrong_topic_memes'];
 const COMPLAINT_REASONS = ['not_meme', 'broken', 'other'];
