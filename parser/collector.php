@@ -89,31 +89,73 @@ function build_candidate_queue($posts_by_platform, $seen_images) {
     return $candidates;
 }
 
-/**
- * Один кандидат: превью, кадры (для видео), анализ моделью по текущей теме, порог и запись в пул.
- * Возвращает true, если запись добавлена в пул.
- */
-function analyze_candidate($item, $history, $topic) {
-    $is_video = ($item['video'] ?? '') !== '';
-    echo "Анализ [{$item['source']}] " . ($is_video ? 'видео' : 'картинка') . " {$item['image']}\n";
+/** Скачивает и проверяет картинку кандидата (у видео — обложку). Возвращает байты или null. */
+function fetch_candidate_poster($item) {
     $poster_data = http_get($item['image']);
     if (!$poster_data) {
         echo "-> Превью не скачалось, пропуск.\n";
-        return false;
+        return null;
     }
     try {
         validate_image_bytes($poster_data);
     } catch (Throwable $error) {
         echo "-> Пропуск: " . $error->getMessage() . "\n";
-        return false;
+        return null;
     }
+    return $poster_data;
+}
 
+/**
+ * Полный анализ кандидата: кадры (для видео), анализ моделью с размышлениями, порог и запись в пул.
+ * Возвращает true, если запись добавлена в пул.
+ */
+function analyze_candidate($item, $poster_data, $history, $topic) {
+    $is_video = ($item['video'] ?? '') !== '';
+    echo "Полный анализ [{$item['source']}] " . ($is_video ? 'видео' : 'картинка') . " {$item['image']}\n";
     $video = $is_video ? video_analysis_input($item['video'], $poster_data) : null;
     try {
         return analyze_and_store_candidate($item, $poster_data, $video, $history, $topic);
     } finally {
         release_video_analysis($video); // скачанный ролик нужен только на время анализа и сохранения в кэш
     }
+}
+
+/**
+ * Быстрая оценка пачки кандидатов. Возвращает прошедших порог, лучшие первыми:
+ * [['item' => ..., 'poster' => байты, 'score' => число], ...]. $stats считает оценённых и отсеянных.
+ */
+function prescreen_batch(array $batch, $topic, array &$stats, $deadline) {
+    $passed = [];
+    foreach ($batch as $item) {
+        if (time() > $deadline) break;
+        $kind = ($item['video'] ?? '') !== '' ? 'видео' : 'картинка';
+        echo "Быстрая оценка [{$item['source']}] {$kind}\n";
+        $poster = fetch_candidate_poster($item);
+        if ($poster === null) continue;
+        if (!PRESCREEN_ENABLED) {
+            $passed[] = ['item' => $item, 'poster' => $poster, 'score' => 0];
+            continue;
+        }
+        $quick = quick_relevance_score($poster, post_caption_for_ai($item), $topic);
+        $stats['prescreened']++;
+        if ($quick['score'] === null) {
+            // Модель не дала число — не отбрасываем: решит полный анализ.
+            echo "-> Быстрая оценка не получена ({$quick['seconds']} с" . ($quick['error'] ? ", {$quick['error']}" : '') . "), отправляю на полный анализ.\n";
+            $passed[] = ['item' => $item, 'poster' => $poster, 'score' => PRESCREEN_THRESHOLD];
+            continue;
+        }
+        if ($quick['score'] < PRESCREEN_THRESHOLD) {
+            $stats['rejected']++;
+            echo "-> Быстрая оценка {$quick['score']}% ({$quick['seconds']} с) — отсеяно.\n";
+            continue;
+        }
+        echo "-> Быстрая оценка {$quick['score']}% ({$quick['seconds']} с) — на полный анализ.\n";
+        $passed[] = ['item' => $item, 'poster' => $poster, 'score' => $quick['score']];
+    }
+    usort($passed, function ($a, $b) {
+        return $b['score'] <=> $a['score'];
+    });
+    return $passed;
 }
 
 function analyze_and_store_candidate($item, $poster_data, $video, $history, $topic) {
@@ -172,7 +214,20 @@ function cache_candidate_media($item, $poster_data, $downloaded_video = null) {
     return $item;
 }
 
-/** Точка входа: сбор, очередь и анализ кандидатов в пределах лимитов из config.php. */
+/** Причина остановить сбор (лимиты из config.php) или null, если можно продолжать. */
+function collector_stop_reason($started_at, $analyzed, $added) {
+    if (time() - $started_at > PARSER_MAX_SECONDS) return 'Достигнут лимит времени одного запуска.';
+    if ($analyzed >= CONTENT_ANALYZE_PER_RUN) return 'Достигнут лимит полных анализов за запуск.';
+    if ($added >= CONTENT_ADDED_PER_RUN) return 'Достигнут лимит новых записей за запуск.';
+    // Актуальное состояние пула с диска, а не устаревшая копия из начала запуска
+    if (count(load_data(POOL_FILE, [])) >= CONTENT_POOL_TARGET) return 'Пул заполнен до ' . CONTENT_POOL_TARGET . ' записей.';
+    return null;
+}
+
+/**
+ * Точка входа: сбор, очередь кандидатов, затем пачками — быстрая оценка и полный анализ лучших из пачки.
+ * Пачки нужны, чтобы первые записи появлялись в пуле сразу, а не после быстрой оценки всей очереди.
+ */
 function run_collector() {
     $started_at = time();
     $removed = media_cache_cleanup(load_data(POOL_FILE, []));
@@ -182,25 +237,26 @@ function run_collector() {
 
     $posts_by_platform = collect_posts_by_platform(load_source_db());
     $candidates = build_candidate_queue($posts_by_platform, $seen_images);
-    echo "Тема поиска: «" . current_topic() . "». Кандидатов для ИИ-анализа: " . count($candidates) . ".\n";
+    echo "Тема поиска: «" . current_topic() . "». Кандидатов: " . count($candidates) . "."
+        . (PRESCREEN_ENABLED ? " Сначала быстрая оценка по картинке " . PRESCREEN_MAX_SIDE . " px, порог " . PRESCREEN_THRESHOLD . "%." : '') . "\n";
 
-    $analyzed_in_this_session = 0;
-    $added_in_this_session = 0;
-    foreach ($candidates as $item) {
-        if (time() - $started_at > PARSER_MAX_SECONDS) {
-            echo "Достигнут лимит времени одного запуска.\n";
-            break;
+    $stats = ['prescreened' => 0, 'rejected' => 0];
+    $analyzed = 0;
+    $added = 0;
+    $stop = null;
+    foreach (array_chunk($candidates, PRESCREEN_BATCH) as $batch) {
+        if ($stop = collector_stop_reason($started_at, $analyzed, $added)) break;
+        // Тема читается с диска для каждой пачки: смена темы на сайте действует сразу
+        $passed = prescreen_batch($batch, current_topic(), $stats, $started_at + PARSER_MAX_SECONDS);
+        foreach ($passed as $candidate) {
+            if ($stop = collector_stop_reason($started_at, $analyzed, $added)) break 2;
+            $analyzed++;
+            // История тоже читается с диска, чтобы вкусы учитывали свежие голоса
+            $history = load_data(HISTORY_FILE, $history);
+            if (analyze_candidate($candidate['item'], $candidate['poster'], $history, current_topic())) $added++;
         }
-        if ($analyzed_in_this_session >= CONTENT_ANALYZE_PER_RUN || $added_in_this_session >= CONTENT_ADDED_PER_RUN) break;
-        // Актуальное состояние пула с диска, а не устаревшая копия из начала запуска
-        if (count(load_data(POOL_FILE, [])) >= CONTENT_POOL_TARGET) {
-            echo "Пул заполнен до " . CONTENT_POOL_TARGET . " записей.\n";
-            break;
-        }
-        $analyzed_in_this_session++;
-        // История и тема тоже читаются с диска: вкус учитывает свежие голоса, а смена темы действует сразу
-        $history = load_data(HISTORY_FILE, $history);
-        if (analyze_candidate($item, $history, current_topic())) $added_in_this_session++;
     }
-    echo "Сбор полностью завершен! Добавлено за запуск: {$added_in_this_session}, проанализировано: {$analyzed_in_this_session}.\n";
+    if ($stop) echo $stop . "\n";
+    echo "Сбор завершён. Быстро оценено: {$stats['prescreened']}, отсеяно быстрой оценкой: {$stats['rejected']},"
+        . " полных анализов: {$analyzed}, добавлено в пул: {$added}.\n";
 }
