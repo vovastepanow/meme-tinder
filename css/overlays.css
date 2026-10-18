@@ -24,14 +24,51 @@
 }
 .image-viewer img.is-zoomed { cursor: grab; }
 .image-viewer.is-dragging img { cursor: grabbing; transition: none; }
-/* Видео в просмотрщике: обычный плеер со звуком и контролами, без зума и перетаскивания. */
-.image-viewer.is-video { cursor: default; touch-action: auto; }
+/* Видео в просмотрщике: обычный плеер со звуком и контролами; зум колесом, сдвиг — за фон. */
+.image-viewer.is-video { cursor: default; touch-action: none; }
 .image-viewer video {
     display: block;
     max-width: calc(100vw - 48px);
     max-height: calc(100vh - 72px);
     background: #000;
     cursor: auto;
+    transform-origin: center center;
+    transition: transform 0.08s ease-out;
+}
+.image-viewer.is-dragging video { transition: none; }
+/* Загрузка или ошибка поверх медиа. */
+.image-viewer-status {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: 2;
+    display: grid;
+    gap: 10px;
+    justify-items: center;
+    max-width: min(420px, calc(100vw - 48px));
+    padding: 16px 20px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: rgba(21, 21, 23, 0.92);
+    color: var(--text);
+    font-size: 14px;
+    text-align: center;
+    transform: translate(-50%, -50%);
+    cursor: default;
+}
+.image-viewer-status a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+/* Текущий масштаб, пока он отличается от 100%. */
+.image-viewer-zoom {
+    position: absolute;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: rgba(21, 21, 23, 0.75);
+    color: var(--muted);
+    font: 12px var(--mono);
+    pointer-events: none;
 }
 .image-viewer-close {
     position: absolute;

@@ -216,7 +216,12 @@
         <button id="image-viewer-close" class="image-viewer-close" type="button" aria-label="Закрыть просмотр">×</button>
         <img id="image-viewer-image" alt="" draggable="false">
         <video id="image-viewer-video" controls playsinline hidden></video>
-        <div id="image-viewer-hint" class="image-viewer-hint">Колесо — зум до 5×, перетаскивание — сдвиг, клик — закрыть</div>
+        <div id="image-viewer-status" class="image-viewer-status" role="status" hidden>
+            <span id="image-viewer-status-text"></span>
+            <a id="image-viewer-source" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a>
+        </div>
+        <div id="image-viewer-zoom" class="image-viewer-zoom" hidden>100%</div>
+        <div id="image-viewer-hint" class="image-viewer-hint">Колесо — увеличить или уменьшить, перетаскивание — сдвиг, клик по фону — закрыть</div>
     </div>
 </body>
 </html>

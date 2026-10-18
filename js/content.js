@@ -88,6 +88,9 @@ function renderSlide() {
         delete image.dataset.videoFallback;
     }
     image.alt = isVideo ? 'Видео: нажмите, чтобы смотреть' : 'Запись';
+    // Для просмотрщика: запасной адрес картинки и ссылка на пост для сообщения об ошибке.
+    image.dataset.fallback = slide.fallbackImage || '';
+    image.dataset.sourceUrl = safeSourcePostUrl(state.item);
     image.hidden = !slide.image;
     if (slide.image) setImageWithFallback(image, slide);
     else image.removeAttribute('src');
@@ -112,8 +115,9 @@ function expandCurrentSlide() {
     const slide = state.slides[state.slideIndex];
     if (!slide) return;
     const image = $('item-image');
-    if (slide.video) openVideoViewer(slide.video, image.currentSrc || slide.image, slide.fallbackVideo);
-    else openImageViewer(image.currentSrc || slide.image, 'Запись');
+    const sourceUrl = safeSourcePostUrl(state.item);
+    if (slide.video) openVideoViewer(slide.video, image.currentSrc || slide.image, slide.fallbackVideo, sourceUrl);
+    else openImageViewer(image.currentSrc || slide.image, 'Запись', { fallback: slide.fallbackImage, sourceUrl });
 }
 
 /** Браузер заранее скачивает картинки следующих записей, чтобы они открывались сразу. */

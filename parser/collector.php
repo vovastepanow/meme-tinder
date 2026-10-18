@@ -252,7 +252,10 @@ function analyze_and_store_candidate($item, $poster_data, $video, $history, $top
 function cache_candidate_media($item, $poster_data, $downloaded_video = null) {
     $item['image_local'] = media_cache_store_image($item['image'], $poster_data);
     if (($item['video'] ?? '') !== '') {
-        $item['video_local'] = media_cache_store_video($item['video'], $downloaded_video);
+        // HEVC и другие форматы, которые браузер не воспроизведёт, перекодируются в H.264 перед сохранением.
+        $playable = $downloaded_video !== null ? browser_playable_video($downloaded_video) : null;
+        $item['video_local'] = media_cache_store_video($item['video'], $playable, $playable !== $downloaded_video);
+        if ($playable !== null && $playable !== $downloaded_video) @unlink($playable);
         echo $item['video_local'] !== '' ? "-> Видео сохранено в кэш сайта.\n" : "-> Видео не удалось сохранить в кэш, на сайте будет исходная ссылка.\n";
     }
     if ($item['image_local'] === '') echo "-> Картинку не удалось сохранить в кэш, на сайте будет исходная ссылка.\n";

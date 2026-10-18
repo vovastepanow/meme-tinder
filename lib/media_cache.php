@@ -52,9 +52,9 @@ function media_cache_store_image($source_url, $bytes) {
  * Сохраняет видео в кэш. $downloaded_file — уже скачанный ролик (после раскадровки), иначе видео скачивается
  * заново (не больше VIDEO_MAX_BYTES). Возвращает адрес для браузера или ''.
  */
-function media_cache_store_video($source_url, $downloaded_file = null) {
+function media_cache_store_video($source_url, $downloaded_file = null, $force_mp4 = false) {
     $extension = strtolower(pathinfo((string)parse_url($source_url, PHP_URL_PATH), PATHINFO_EXTENSION));
-    if (!in_array($extension, MEDIA_CACHE_VIDEO_EXTENSIONS, true)) $extension = 'mp4';
+    if ($force_mp4 || !in_array($extension, MEDIA_CACHE_VIDEO_EXTENSIONS, true)) $extension = 'mp4'; // перекодированное — всегда MP4
     $temporary = null;
     if ($downloaded_file === null || !is_file($downloaded_file)) {
         $temporary = download_video_temp($source_url);

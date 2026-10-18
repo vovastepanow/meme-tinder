@@ -126,3 +126,39 @@ function video_analysis_input($video_url, $poster_data) {
 function release_video_analysis($video) {
     if (!empty($video['file'])) @unlink($video['file']);
 }
+
+// ---- Совместимость с браузером ----
+
+/** Видеокодеки, которые воспроизводят все основные браузеры (HEVC/H.265 в Chrome на Linux не играет). */
+const BROWSER_VIDEO_CODECS = ['h264', 'vp8', 'vp9', 'av1'];
+
+function video_codec($video_path) {
+    $command = 'ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 ' . escapeshellarg($video_path) . ' 2>/dev/null';
+    return strtolower(trim((string)@shell_exec($command)));
+}
+
+/**
+ * Если кодек ролика браузер не воспроизведёт, перекодирует его в H.264 + AAC (MP4 с быстрым стартом).
+ * Возвращает путь к файлу, который можно сохранять в кэш: исходный или новый временный
+ * (его потом удаляет вызывающий — он отличается от $video_path). Без ffmpeg возвращает исходный.
+ */
+function browser_playable_video($video_path) {
+    $ffmpeg = ffmpeg_binary();
+    if ($ffmpeg === '' || !is_file($video_path)) return $video_path;
+    $codec = video_codec($video_path);
+    if ($codec === '' || in_array($codec, BROWSER_VIDEO_CODECS, true)) return $video_path;
+
+    echo "-> Видео в кодеке {$codec}: браузер его может не воспроизвести, перекодирую в H.264...\n";
+    $out = tempnam(sys_get_temp_dir(), 'ct-h264-');
+    if ($out === false) return $video_path;
+    $command = escapeshellarg($ffmpeg) . ' -v error -y -i ' . escapeshellarg($video_path)
+        . ' -map 0:v:0 -map 0:a:0? -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p'
+        . ' -c:a aac -b:a 128k -movflags +faststart -f mp4 ' . escapeshellarg($out) . ' 2>/dev/null';
+    exec($command, $output, $exit_code);
+    if ($exit_code !== 0 || !is_file($out) || filesize($out) === 0) {
+        @unlink($out);
+        echo "-> Перекодировать не удалось, сохраняю как есть.\n";
+        return $video_path;
+    }
+    return $out;
+}
