@@ -1,5 +1,5 @@
 <?php
-// index.php — JSON API для фронтенда (index.html / script.js). Только маршрутизация: логика в lib/ и handlers/.
+// index.php — JSON API для фронтенда (index.html / js/). Только маршрутизация: логика в lib/ и handlers/.
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/project_storage.php';
 require_once __DIR__ . '/http_client.php';
