@@ -108,12 +108,22 @@ function analyze_candidate($item, $history, $topic) {
         return false;
     }
 
-    $frames = $is_video ? video_analysis_frames($item['video'], $poster_data) : [$poster_data];
-    $caption = post_caption_for_ai($item);
-
-    echo "-> " . ($is_video ? 'Кадры видео уходят' : 'Картинка уходит') . " в vision-модель: описание и оценка по теме «{$topic}»...\n";
+    $video = $is_video ? video_analysis_input($item['video'], $poster_data) : null;
     try {
-        $analysis = analyze_content_with_vision($frames, $caption, $history, $topic, $is_video);
+        return analyze_and_store_candidate($item, $poster_data, $video, $history, $topic);
+    } finally {
+        release_video_analysis($video); // скачанный ролик нужен только на время анализа и сохранения в кэш
+    }
+}
+
+function analyze_and_store_candidate($item, $poster_data, $video, $history, $topic) {
+    $frames = $video['frames'] ?? [$poster_data];
+    $caption = post_caption_for_ai($item);
+    $is_storyboard = $video !== null && count($frames) > 1;
+
+    echo "-> " . ($is_storyboard ? 'Раскадровка видео уходит' : 'Картинка уходит') . " в vision-модель: описание и оценка по теме «{$topic}»...\n";
+    try {
+        $analysis = analyze_content_with_vision($frames, $caption, $history, $topic, $is_storyboard ? $video : null);
     } catch (Throwable $error) {
         echo "-> ИИ не вернул корректную оценку: " . $error->getMessage() . "\n";
         return false;
@@ -136,7 +146,7 @@ function analyze_candidate($item, $history, $topic) {
     $item['rating'] = $analysis['rating'];
     $item['topic'] = $topic;
 
-    $item = cache_candidate_media($item, $poster_data);
+    $item = cache_candidate_media($item, $poster_data, $video['file'] ?? null);
     $was_added = add_item_to_pool_safely(POOL_FILE, HISTORY_FILE, $item);
     if ($was_added) {
         echo "[!] Запись сохранена и выведена на сайт.\n";
@@ -152,10 +162,10 @@ function analyze_candidate($item, $history, $topic) {
  * Сохраняет медиа отобранной записи в кэш: ссылки источников со временем протухают,
  * а копия доступна, пока запись лежит в пуле. Без кэша запись показывается по исходной ссылке.
  */
-function cache_candidate_media($item, $poster_data) {
+function cache_candidate_media($item, $poster_data, $downloaded_video = null) {
     $item['image_local'] = media_cache_store_image($item['image'], $poster_data);
     if (($item['video'] ?? '') !== '') {
-        $item['video_local'] = media_cache_store_video($item['video']);
+        $item['video_local'] = media_cache_store_video($item['video'], $downloaded_video);
         echo $item['video_local'] !== '' ? "-> Видео сохранено в кэш сайта.\n" : "-> Видео не удалось сохранить в кэш, на сайте будет исходная ссылка.\n";
     }
     if ($item['image_local'] === '') echo "-> Картинку не удалось сохранить в кэш, на сайте будет исходная ссылка.\n";

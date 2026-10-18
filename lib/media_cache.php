@@ -48,20 +48,27 @@ function media_cache_store_image($source_url, $bytes) {
     }
 }
 
-/** Скачивает видео (не больше VIDEO_MAX_BYTES) в кэш. Возвращает адрес для браузера или ''. */
-function media_cache_store_video($source_url) {
+/**
+ * Сохраняет видео в кэш. $downloaded_file — уже скачанный ролик (после раскадровки), иначе видео скачивается
+ * заново (не больше VIDEO_MAX_BYTES). Возвращает адрес для браузера или ''.
+ */
+function media_cache_store_video($source_url, $downloaded_file = null) {
     $extension = strtolower(pathinfo((string)parse_url($source_url, PHP_URL_PATH), PATHINFO_EXTENSION));
     if (!in_array($extension, MEDIA_CACHE_VIDEO_EXTENSIONS, true)) $extension = 'mp4';
-    $temporary = download_video_temp($source_url);
-    if ($temporary === null) return '';
+    $temporary = null;
+    if ($downloaded_file === null || !is_file($downloaded_file)) {
+        $temporary = download_video_temp($source_url);
+        if ($temporary === null) return '';
+        $downloaded_file = $temporary;
+    }
     try {
-        $bytes = file_get_contents($temporary);
+        $bytes = file_get_contents($downloaded_file);
         return is_string($bytes) && $bytes !== '' ? media_cache_write(media_cache_file_name($source_url, $extension), $bytes) : '';
     } catch (Throwable $error) {
         error_log('Media cache: ' . $error->getMessage());
         return '';
     } finally {
-        @unlink($temporary);
+        if ($temporary !== null) @unlink($temporary);
     }
 }
 

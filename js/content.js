@@ -71,46 +71,26 @@ function setImageWithFallback(image, slide) {
     image.src = slide.image;
 }
 
-function setVideoWithFallback(video, slide) {
-    video.onerror = () => {
-        if (slide.fallbackVideo && video.getAttribute('src') !== slide.fallbackVideo) {
-            video.src = slide.fallbackVideo;
-            return;
-        }
-        video.onerror = null;
-        log(`Видео не загрузилось: ${slide.fallbackVideo || slide.video}`);
-    };
-    video.poster = slide.image || '';
-    video.muted = false;
-    if (video.getAttribute('src') !== slide.video) video.src = slide.video;
-}
-
-function stopCardVideo() {
-    const video = $('item-video');
-    if (!video.getAttribute('src')) return;
-    video.pause();
-    video.removeAttribute('src');
-    video.load();
-}
-
 function renderSlide() {
     const slide = state.slides[state.slideIndex] || { image: '', text: 'Нет изображения' };
     const image = $('item-image');
-    const video = $('item-video');
     hide('item-media-fallback');
 
-    if (slide.video) {
-        image.removeAttribute('src');
-        image.hidden = true;
-        video.hidden = false;
-        setVideoWithFallback(video, slide);
+    // У видео в карточке — миниатюра (обложка) со значком ▶; клик открывает плеер в просмотрщике.
+    const isVideo = Boolean(slide.video);
+    show('item-play', isVideo);
+    image.classList.toggle('is-video-thumb', isVideo);
+    if (isVideo) {
+        image.dataset.video = slide.video;
+        image.dataset.videoFallback = slide.fallbackVideo || '';
     } else {
-        stopCardVideo();
-        video.hidden = true;
-        image.hidden = !slide.image;
-        if (slide.image) setImageWithFallback(image, slide);
-        else image.removeAttribute('src');
+        delete image.dataset.video;
+        delete image.dataset.videoFallback;
     }
+    image.alt = isVideo ? 'Видео: нажмите, чтобы смотреть' : 'Запись';
+    image.hidden = !slide.image;
+    if (slide.image) setImageWithFallback(image, slide);
+    else image.removeAttribute('src');
 
     $('item-slide-caption').textContent = slide.text || state.item?.text || NO_TEXT;
     const hasMultiple = state.slides.length > 1;
@@ -127,20 +107,13 @@ function changeSlide(delta) {
     renderSlide();
 }
 
-/** Открывает текущий слайд на весь экран: видео — плеером со звуком (с того же момента), картинку — с зумом. */
+/** Открывает текущий слайд на весь экран: видео — плеером со звуком, картинку — с зумом. */
 function expandCurrentSlide() {
     const slide = state.slides[state.slideIndex];
     if (!slide) return;
-    if (slide.video) {
-        const video = $('item-video');
-        const source = video.currentSrc || video.getAttribute('src') || slide.video;
-        const position = video.currentTime || 0;
-        video.pause();
-        openVideoViewer(source, slide.image, position);
-    } else {
-        const image = $('item-image');
-        openImageViewer(image.currentSrc || slide.image, 'Запись');
-    }
+    const image = $('item-image');
+    if (slide.video) openVideoViewer(slide.video, image.currentSrc || slide.image, slide.fallbackVideo);
+    else openImageViewer(image.currentSrc || slide.image, 'Запись');
 }
 
 /** Браузер заранее скачивает картинки следующих записей, чтобы они открывались сразу. */
@@ -190,7 +163,6 @@ export async function loadCurrentItem() {
 
         if (data.status === 'loading') {
             state.item = null;
-            stopCardVideo();
             showArea('searching');
             watchParser();
             state.pollTimer = setTimeout(loadCurrentItem, POLL_INTERVAL_MS);
@@ -199,7 +171,6 @@ export async function loadCurrentItem() {
         if (data.status === 'empty' || !data.image) {
             state.item = null;
             state.slides = [];
-            stopCardVideo();
             showArea('empty', data.message);
             log(data.message || 'Пул контента пуст.');
             return;
@@ -235,7 +206,6 @@ async function vote(type, details = {}) {
     state.voting = true;
     const tab = $('content-tab');
     tab.classList.add('is-busy');
-    stopCardVideo();
     try {
         await api('vote', { body: { vote: type, image: state.item.image, ...details } });
         await loadCurrentItem();
@@ -314,6 +284,7 @@ export function initializeContentTab({ onAddItem }) {
     $('carousel-prev').addEventListener('click', () => changeSlide(-1));
     $('carousel-next').addEventListener('click', () => changeSlide(1));
     $('item-expand').addEventListener('click', expandCurrentSlide);
+    $('item-play').addEventListener('click', expandCurrentSlide);
     document.querySelectorAll('#content-tab [data-vote]').forEach(button => {
         button.addEventListener('click', () => vote(button.dataset.vote));
     });

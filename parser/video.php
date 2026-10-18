@@ -1,5 +1,7 @@
 <?php
-// Видео для фонового парсера: загрузка файла и вырезание кадров через ffmpeg.
+// Видео для фонового парсера: загрузка файла и раскадровка через ffmpeg.
+// Ollama принимает только картинки, поэтому видео передаётся модели как последовательность кадров
+// с метками времени: примерно кадр в секунду, от VIDEO_FRAMES_MIN до VIDEO_FRAMES_MAX кадров.
 
 function ffmpeg_binary() {
     static $binary = null;
@@ -13,9 +15,9 @@ function ffmpeg_binary() {
     return $binary;
 }
 
-/** Downloads a video to a temp file. Returns its path, or null if it is missing, too big or unreachable. */
+/** Скачивает видео во временный файл. Возвращает путь или null (нет файла, слишком большой, сеть). */
 function download_video_temp($url, $max_bytes = VIDEO_MAX_BYTES) {
-    $path = tempnam(sys_get_temp_dir(), 'mt-video-');
+    $path = tempnam(sys_get_temp_dir(), 'ct-video-');
     if ($path === false) return null;
     $handle = @fopen($path, 'wb');
     if (!$handle) {
@@ -34,7 +36,7 @@ function download_video_temp($url, $max_bytes = VIDEO_MAX_BYTES) {
         CURLOPT_USERAGENT => 'ContentTinder/1.0',
         CURLOPT_WRITEFUNCTION => function ($curl, $chunk) use (&$size, $max_bytes, $handle) {
             $size += strlen($chunk);
-            if ($size > $max_bytes) return 0; // abort: the file is too big
+            if ($size > $max_bytes) return 0; // файл слишком большой — прерываем загрузку
             return fwrite($handle, $chunk);
         }
     ]);
@@ -48,52 +50,79 @@ function download_video_temp($url, $max_bytes = VIDEO_MAX_BYTES) {
     return $path;
 }
 
-/** Cuts evenly spaced frames (JPEG bytes) from a video file. Returns [] when ffmpeg is unavailable. */
-function video_frame_jpegs($video_path, $count = VIDEO_FRAMES) {
-    $ffmpeg = ffmpeg_binary();
-    if ($ffmpeg === '' || !is_file($video_path)) return [];
+function video_duration($video_path) {
+    $command = 'ffprobe -v error -show_entries format=duration -of csv=p=0 ' . escapeshellarg($video_path) . ' 2>/dev/null';
+    return max(0.0, (float)trim((string)@shell_exec($command)));
+}
 
-    $duration = (float)trim((string)@shell_exec('ffprobe -v error -show_entries format=duration -of csv=p=0 ' . escapeshellarg($video_path) . ' 2>/dev/null'));
-    if ($duration <= 0) $duration = 3.0;
-
-    $frames = [];
-    for ($i = 1; $i <= $count; $i++) {
-        $at = $duration * $i / ($count + 1);
-        $base = tempnam(sys_get_temp_dir(), 'mt-frame-');
-        if ($base === false) break;
-        $out = $base . '.jpg';
-        $command = escapeshellarg($ffmpeg) . ' -v error -y -ss ' . sprintf('%.2F', $at) . ' -i ' . escapeshellarg($video_path)
-            . ' -frames:v 1 -vf scale=768:-2 -q:v 4 ' . escapeshellarg($out) . ' 2>/dev/null';
-        exec($command, $output, $exit_code);
-        if ($exit_code === 0 && is_file($out) && filesize($out) > 0) {
-            $frames[] = file_get_contents($out);
-        }
-        @unlink($out);
-        @unlink($base);
+/** Моменты для кадров: примерно раз в VIDEO_SECONDS_PER_FRAME секунд, равномерно по всему ролику. */
+function video_frame_timestamps($duration) {
+    if ($duration <= 0) $duration = VIDEO_FRAMES_MIN * VIDEO_SECONDS_PER_FRAME;
+    $count = (int)round($duration / VIDEO_SECONDS_PER_FRAME);
+    $count = max(VIDEO_FRAMES_MIN, min(VIDEO_FRAMES_MAX, $count));
+    $timestamps = [];
+    for ($i = 0; $i < $count; $i++) {
+        $timestamps[] = round($duration * ($i + 0.5) / $count, 2); // середины равных отрезков: без чёрных кадров на краях
     }
-    return array_values(array_filter($frames, 'is_string'));
+    return $timestamps;
 }
 
 /**
- * Frames of a video for the vision model. Without ffmpeg nothing is downloaded at all;
- * if the download or the frame extraction fails, the poster picture is analysed instead.
+ * Раскадровка: JPEG-кадры, уменьшенные до VIDEO_FRAME_MAX_SIDE по длинной стороне (так 16 кадров
+ * укладываются в контекст модели и для горизонтальных, и для вертикальных роликов).
+ * Возвращает ['frames' => [байты], 'timestamps' => [секунды], 'duration' => секунды] или null.
  */
-function video_analysis_frames($video_url, $poster_data) {
+function video_storyboard($video_path) {
+    $ffmpeg = ffmpeg_binary();
+    if ($ffmpeg === '' || !is_file($video_path)) return null;
+
+    $duration = video_duration($video_path);
+    $side = VIDEO_FRAME_MAX_SIDE;
+    $scale = "scale='if(gt(iw,ih),{$side},-2)':'if(gt(iw,ih),-2,{$side})'";
+    $frames = [];
+    $timestamps = [];
+    foreach (video_frame_timestamps($duration) as $at) {
+        $out = tempnam(sys_get_temp_dir(), 'ct-frame-');
+        if ($out === false) break;
+        $command = escapeshellarg($ffmpeg) . ' -v error -y -ss ' . sprintf('%.2F', $at) . ' -i ' . escapeshellarg($video_path)
+            . ' -frames:v 1 -vf ' . escapeshellarg($scale) . ' -q:v 4 -f image2 ' . escapeshellarg($out) . ' 2>/dev/null';
+        exec($command, $output, $exit_code);
+        $bytes = $exit_code === 0 && is_file($out) ? file_get_contents($out) : false;
+        @unlink($out);
+        if (is_string($bytes) && $bytes !== '') {
+            $frames[] = $bytes;
+            $timestamps[] = $at;
+        }
+    }
+    if (!$frames) return null;
+    return ['frames' => $frames, 'timestamps' => $timestamps, 'duration' => $duration];
+}
+
+/**
+ * Видео для модели. Возвращает ['frames', 'timestamps', 'duration', 'file'] — 'file' (скачанный ролик,
+ * его потом сохраняют в кэш) удаляет вызывающий через release_video_analysis().
+ * Без ffmpeg видео не скачивается; если загрузка или раскадровка не удались, анализируется превью.
+ */
+function video_analysis_input($video_url, $poster_data) {
+    $poster_only = ['frames' => [$poster_data], 'timestamps' => [], 'duration' => 0.0, 'file' => null];
     if (ffmpeg_binary() === '') {
         echo "-> ffmpeg не найден на сервере, кадры видео не извлекаются; анализирую превью.\n";
-        return [$poster_data];
+        return $poster_only;
     }
     $path = download_video_temp($video_url);
     if ($path === null) {
         echo "-> Видео не скачалось (размер или ошибка сети), анализирую превью.\n";
-        return [$poster_data];
+        return $poster_only;
     }
-    $frames = video_frame_jpegs($path);
-    @unlink($path);
-    if (!$frames) {
+    $storyboard = video_storyboard($path);
+    if ($storyboard === null) {
         echo "-> Кадры видео не извлечены, анализирую превью.\n";
-        return [$poster_data];
+        return ['file' => $path] + $poster_only;
     }
-    echo "-> Извлечено кадров видео: " . count($frames) . "\n";
-    return $frames;
+    echo "-> Раскадровка: " . count($storyboard['frames']) . " кадров из видео длиной " . format_video_time($storyboard['duration']) . ".\n";
+    return $storyboard + ['file' => $path];
+}
+
+function release_video_analysis($video) {
+    if (!empty($video['file'])) @unlink($video['file']);
 }

@@ -69,19 +69,25 @@ export function openImageViewer(source, altText) {
     openViewer();
 }
 
-/** Видео открывается со звуком и стандартными контролами; $startAt — позиция, с которой продолжить. */
-export function openVideoViewer(source, poster = '', startAt = 0) {
+/**
+ * Видео открывается со звуком и стандартными контролами. $fallback — запасной адрес
+ * (исходная ссылка), если основной (копия из кэша) не загрузится.
+ */
+export function openVideoViewer(source, poster = '', fallback = '') {
     const video = document.getElementById('image-viewer-video');
     document.getElementById('image-viewer').classList.add('is-video');
     document.getElementById('image-viewer-image').hidden = true;
     document.getElementById('image-viewer-hint').textContent = 'Esc или клик по фону — закрыть';
     video.hidden = false;
     video.poster = poster;
+    video.onerror = () => {
+        if (fallback && video.getAttribute('src') !== fallback) {
+            video.src = fallback;
+            video.play().catch(() => {});
+        }
+    };
     video.src = source;
     video.muted = false;
-    video.addEventListener('loadedmetadata', () => {
-        if (startAt > 0 && startAt < video.duration) video.currentTime = startAt;
-    }, { once: true });
     openViewer();
     video.play().catch(() => { /* автозапуск запрещён — пользователь нажмёт «play» сам */ });
 }
@@ -107,7 +113,9 @@ export function initializeImageViewer() {
         const target = event.target.closest('img');
         if (!target || target === image || (!target.currentSrc && !target.src)) return;
         event.preventDefault();
-        openImageViewer(target.currentSrc || target.src, target.alt);
+        // Миниатюра видео (data-video) открывает плеер, обычная картинка — просмотр с зумом.
+        if (target.dataset.video) openVideoViewer(target.dataset.video, target.currentSrc || target.src, target.dataset.videoFallback || '');
+        else openImageViewer(target.currentSrc || target.src, target.alt);
     });
     document.getElementById('image-viewer-close').addEventListener('click', event => {
         event.stopPropagation();

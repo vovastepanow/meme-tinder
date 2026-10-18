@@ -33,8 +33,16 @@ async function loadVkOAuthStatus() {
 function renderPostTile(post) {
     const image = (Array.isArray(post.images) && post.images[0]) || post.image;
     if (!image) return null;
+    const picture = el('img', { src: image, alt: post.video ? 'Видео из поста' : 'Изображение из поста', loading: 'lazy' });
+    const wrap = el('div', { className: 'img-wrap' }, picture);
+    if (post.video) {
+        // Миниатюра видео: клик открывает плеер в просмотрщике (см. image-viewer.js).
+        picture.dataset.video = post.video;
+        picture.classList.add('is-video-thumb');
+        wrap.append(el('span', { className: 'play-badge', textContent: '▶', ariaHidden: 'true' }));
+    }
     return el('div', { className: 'grid-item' },
-        el('div', { className: 'img-wrap' }, el('img', { src: image, alt: 'Изображение из поста', loading: 'lazy' })),
+        wrap,
         el('div', { className: 'grid-item-text', textContent: post.text || 'Пост без текста' })
     );
 }

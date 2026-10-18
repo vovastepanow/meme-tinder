@@ -67,9 +67,15 @@ const DVACH_POSTS_PER_THREAD = 60;
 const TELEGRAM_POSTS_PER_CHANNEL = 40;
 const VK_POSTS_PER_PUBLIC = 60;
 
-// Видео: максимальный размер файла и число кадров, которые уходят в модель.
+// Видео: Ollama принимает только картинки, поэтому ролик уходит в модель раскадровкой с метками времени.
+// Кадров — примерно один в VIDEO_SECONDS_PER_FRAME секунд, но не меньше MIN и не больше MAX.
+// Кадры уменьшаются до VIDEO_FRAME_MAX_SIDE по длинной стороне, чтобы 16 кадров вместе с промптом
+// и размышлениями укладывались в контекст модели (num_ctx 8192). Нужен ffmpeg.
 const VIDEO_MAX_BYTES = 30 * 1024 * 1024;
-const VIDEO_FRAMES = 3;
+const VIDEO_FRAMES_MIN = 8;
+const VIDEO_FRAMES_MAX = 16;
+const VIDEO_SECONDS_PER_FRAME = 1.0;
+const VIDEO_FRAME_MAX_SIDE = 448;
 
 // История оценок: коллекции и причины жалоб.
 const HISTORY_COLLECTIONS = ['liked', 'disliked', 'undecided', 'complaints'];
