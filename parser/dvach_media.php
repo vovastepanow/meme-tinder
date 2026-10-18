@@ -1,8 +1,9 @@
 <?php
 // Двач для фонового парсера: картинки и видео из свежих тредов доски.
 
-function dvach_media_item($board, $thread_id, $post_id, $text, $image, $video) {
+function dvach_media_item($board, $thread_id, $post_id, $text, $image, $video, $posted_at = 0) {
     return [
+        'posted_at' => (int)$posted_at,
         'source' => PLATFORM_DVACH . ' /' . $board . '/ · тред #' . $thread_id . ' · пост #' . $post_id,
         'board' => $board,
         'thread_id' => $thread_id,
@@ -36,7 +37,7 @@ function parse_dvach($board, $thread_limit = DVACH_THREADS_PER_BOARD) {
             $text = dvach_post_text($post);
             $post_id = (string)($post['num'] ?? '');
             foreach (dvach_post_media($board, $post, true) as $media) {
-                $output[] = dvach_media_item($board, $thread_id, $post_id, $text, $media['image'], $media['video']);
+                $output[] = dvach_media_item($board, $thread_id, $post_id, $text, $media['image'], $media['video'], $post['timestamp'] ?? 0);
             }
             if (count($output) >= 200) return $output;
         }

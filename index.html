@@ -62,6 +62,7 @@
                 <div class="info">
                     <span id="item-rating" class="badge">0%</span>
                     <div id="item-source" class="source-text">Источник: —</div>
+                    <div id="item-date" class="source-text" hidden></div>
                     <a id="item-source-link" class="source-post-link" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a>
                     <span id="item-relevance" class="relevance-badge">По теме: —</span>
                     <div class="item-ai-note"><strong>Почему по теме:</strong> <span id="item-why-text"></span></div>
@@ -95,6 +96,13 @@
 
     <!-- ВКЛАДКА 2: ПОДБОР ИСТОЧНИКОВ -->
     <div id="source-tab" class="view-panel">
+        <section class="discovery-panel" aria-label="Автоподбор источников">
+            <div class="discovery-text">
+                <strong>Автоподбор по теме</strong>
+                <span id="discovery-status">Загружаю сведения…</span>
+            </div>
+            <button id="discovery-button" class="primary-button" type="button">Подобрать источники</button>
+        </section>
         <div class="source-actions">
             <label class="source-platform-filter" for="source-platform">
                 <span>Платформа</span>
@@ -118,6 +126,7 @@
             <div class="source-meta">
                 <h3 id="inspect-source-name">Загрузка...</h3>
                 <span id="inspect-source-reason"></span>
+                <div><span id="inspect-source-score" class="relevance-badge source-score"></span></div>
             </div>
 
             <!-- Плитка с несколькими постами источника -->

@@ -30,13 +30,33 @@ function telegram_post_images($content) {
  * У видео-поста 'video' — адрес файла, а 'image' — его постер; видео без постера пропускается.
  */
 function telegram_channel_posts($source, $count) {
+    $html = fetch_telegram_channel_page(ltrim((string)($source['id'] ?? ''), '@'));
+    return $html ? telegram_posts_from_html($html, $source, $count) : [];
+}
+
+/** Время публикации поста из его разметки (<time datetime="...">), unix-время или 0. */
+function telegram_post_time($content) {
+    if (!preg_match('~<time[^>]*\sdatetime="([^"]+)"~i', $content, $match)) return 0;
+    $time = strtotime(telegram_html_attribute($match[1]));
+    return $time === false ? 0 : $time;
+}
+
+/** Время всех постов на странице канала (в том числе без картинок) — для оценки активности. */
+function telegram_post_times($html) {
+    preg_match_all('/data-post="[^"]+"(.*?)(?=data-post="[^"]+"|$)/s', (string)$html, $blocks);
+    return array_values(array_filter(array_map('telegram_post_time', $blocks[1] ?? [])));
+}
+
+/**
+ * Посты из уже загруженной страницы канала (см. telegram_channel_posts), самые свежие первыми:
+ * страница t.me/s/ показывает посты от старых к новым, поэтому блоки перебираются с конца.
+ */
+function telegram_posts_from_html($html, $source, $count) {
     $channel = ltrim((string)($source['id'] ?? ''), '@');
-    $html = fetch_telegram_channel_page($channel);
-    if (!$html) return [];
 
     preg_match_all('/data-post="([^"]+)"(.*?)(?=data-post="[^"]+"|$)/s', $html, $blocks, PREG_SET_ORDER);
     $posts = [];
-    foreach ($blocks as $block) {
+    foreach (array_reverse($blocks) as $block) {
         if (count($posts) >= $count) break;
         $post_id = explode('/', $block[1], 2)[1] ?? '';
         if (!preg_match('/^[0-9]+$/', $post_id)) continue;
@@ -64,6 +84,7 @@ function telegram_channel_posts($source, $count) {
             'text' => $text ?: EMPTY_POST_TEXT,
             'source' => $source['name'] ?? source_display_name(PLATFORM_TELEGRAM, $channel),
             'post_id' => $post_id,
+            'posted_at' => telegram_post_time($content),
             'url' => 'https://t.me/' . rawurlencode($channel) . '/' . rawurlencode($post_id)
         ];
     }
@@ -72,4 +93,55 @@ function telegram_channel_posts($source, $count) {
 
 function build_telegram_preview_posts($source, $count = 4) {
     return telegram_channel_posts($source, $count);
+}
+
+// ---- Автоподбор: сведения о канале и ссылки на другие каналы ----
+
+/** Служебные пути t.me, которые не являются каналами. */
+const TELEGRAM_RESERVED_PATHS = ['joinchat', 'addlist', 'addstickers', 'addemoji', 'addtheme', 'setlanguage', 'share', 'proxy', 'socks', 'boost', 'contact', 'login', 'premium', 'username', 'telegram', 'durov', 'iv'];
+
+/** Число подписчиков из вида «12.3K» / «1.2M» / «845». */
+function telegram_parse_counter($text) {
+    if (!preg_match('/([\d.,]+)\s*([KkMm]?)/', str_replace(' ', '', (string)$text), $match)) return 0;
+    $value = (float)str_replace(',', '.', $match[1]);
+    $multiplier = ['k' => 1000, 'm' => 1000000][strtolower($match[2])] ?? 1;
+    return (int)round($value * $multiplier);
+}
+
+/**
+ * Сведения о публичном канале по странице t.me/s/<канал>: название, описание, подписчики и посты.
+ * Возвращает null, если канала нет, он закрыт или это не канал (у таких страниц нет ленты постов).
+ */
+function telegram_channel_info($channel, $post_count = 6) {
+    $channel = ltrim(trim((string)$channel), '@');
+    $html = fetch_telegram_channel_page($channel);
+    if (!$html || strpos($html, 'data-post="') === false) return null;
+
+    $title = preg_match('~class="tgme_channel_info_header_title"[^>]*>(.*?)</div>~si', $html, $m) ? clean_html_text($m[1]) : '';
+    $description = preg_match('~class="tgme_channel_info_description"[^>]*>(.*?)</div>~si', $html, $m) ? clean_html_text($m[1]) : '';
+    $subscribers = 0;
+    if (preg_match('~<span class="counter_value">([^<]+)</span>\s*<span class="counter_type">subscribers?</span>~i', $html, $m)) {
+        $subscribers = telegram_parse_counter($m[1]);
+    }
+    return [
+        'id' => $channel,
+        'title' => $title ?: $channel,
+        'description' => mb_substr($description, 0, 500),
+        'subscribers' => $subscribers,
+        'posts' => telegram_posts_from_html($html, ['id' => $channel, 'name' => source_display_name(PLATFORM_TELEGRAM, $title ?: $channel)], $post_count),
+        'post_times' => telegram_post_times($html),
+        'linked' => telegram_linked_channels($html, $channel)
+    ];
+}
+
+/** Каналы, на которые ссылаются посты страницы: репосты («Forwarded from») и ссылки t.me/<канал>. */
+function telegram_linked_channels($html, $own_channel = '') {
+    preg_match_all('~https?://t\.me/(?:s/)?([A-Za-z][A-Za-z0-9_]{4,31})(?=[/?"#\'<\s]|$)~', (string)$html, $matches);
+    $found = [];
+    foreach ($matches[1] ?? [] as $handle) {
+        $key = strtolower($handle);
+        if ($key === strtolower($own_channel) || in_array($key, TELEGRAM_RESERVED_PATHS, true) || str_ends_with($key, 'bot')) continue;
+        $found[$key] = $handle;
+    }
+    return array_values($found);
 }

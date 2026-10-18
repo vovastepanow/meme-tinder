@@ -52,6 +52,7 @@ function content_history_record(array $item, $complaint_reason) {
         'thread_id' => $item['thread_id'] ?? '',
         'post_id' => $item['post_id'] ?? '',
         'source_url' => source_post_url($item),
+        'posted_at' => $item['posted_at'] ?? 0,
         'complaint_reason' => $complaint_reason,
         'timestamp' => time()
     ];

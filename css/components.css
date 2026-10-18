@@ -298,6 +298,24 @@ img.is-video-thumb { cursor: pointer !important; }
 }
 
 /* ---- Подбор источников ---- */
+.discovery-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+.discovery-text { display: grid; gap: 4px; min-width: 0; font-size: 13px; }
+#discovery-status { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.discovery-panel .primary-button { flex: 0 0 auto; }
+.source-score { display: inline-block; margin-top: 8px; }
+@media (max-width: 480px) { .discovery-panel { flex-direction: column; align-items: stretch; } }
 .source-actions { display: grid; gap: 10px; width: 100%; }
 .search-trigger { width: 100%; min-height: 46px; font-size: 15px; }
 .source-platform-filter {

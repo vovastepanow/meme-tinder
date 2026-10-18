@@ -151,9 +151,44 @@ function build_vk_preview_posts($source, $count = 4) {
             'text' => $text ?: EMPTY_POST_TEXT,
             'source' => $source['name'] ?? source_display_name(PLATFORM_VK, $domain),
             'post_id' => $post_id,
+            'posted_at' => (int)($post['date'] ?? 0),
             'url' => $owner_id !== '' && $post_id !== '' ? 'https://vk.com/wall' . $owner_id . '_' . $post_id : 'https://vk.com/' . rawurlencode($domain)
         ];
         if (count($posts) >= $count) break;
     }
     return $posts;
+}
+
+// ---- Автоподбор: поиск сообществ ----
+
+/**
+ * Поиск открытых сообществ VK по запросу (нужен подключённый аккаунт VK).
+ * Возвращает [['id' => screen_name, 'title', 'description', 'subscribers']] — самые крупные первыми.
+ */
+function vk_search_groups($query, $count = 15) {
+    $found = vk_api_request('groups.search', ['q' => $query, 'count' => max(1, min(100, $count)), 'sort' => 0]);
+    $ids = [];
+    foreach (($found['items'] ?? []) as $group) {
+        if ((int)($group['is_closed'] ?? 1) !== 0 || ($group['type'] ?? '') === 'event') continue;
+        $ids[] = (int)$group['id'];
+    }
+    if (!$ids) return [];
+
+    $details = vk_api_request('groups.getById', ['group_ids' => implode(',', $ids), 'fields' => 'members_count,description']);
+    $groups = [];
+    foreach (($details['groups'] ?? $details) as $group) {
+        if (!is_array($group)) continue;
+        $screen_name = (string)($group['screen_name'] ?? ('club' . (int)($group['id'] ?? 0)));
+        if (!is_valid_vk_domain($screen_name)) continue;
+        $groups[] = [
+            'id' => $screen_name,
+            'title' => clean_html_text($group['name'] ?? $screen_name),
+            'description' => mb_substr(clean_html_text($group['description'] ?? ''), 0, 500),
+            'subscribers' => (int)($group['members_count'] ?? 0)
+        ];
+    }
+    usort($groups, function ($a, $b) {
+        return $b['subscribers'] <=> $a['subscribers'];
+    });
+    return $groups;
 }

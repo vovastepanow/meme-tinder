@@ -187,6 +187,7 @@ const ACTION_LOG_LABELS = {
     database_read: 'Загрузка записей базы',
     database_options: 'Загрузка списка баз',
     database_reset: 'Очистка всех баз',
+    discover_sources: 'Запуск автоподбора источников',
     debug_reset: 'Сброс демо-данных'
 };
 

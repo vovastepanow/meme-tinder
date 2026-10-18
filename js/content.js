@@ -128,6 +128,17 @@ function preloadUpcoming(urls) {
 
 // ---- Карточка ----
 
+/** «5 мин назад», «3 ч назад», «2 дн назад» или дата, если давно. */
+function formatPostedAt(timestamp) {
+    const seconds = Number(timestamp);
+    if (!seconds) return '';
+    const minutes = Math.max(0, Math.round((Date.now() / 1000 - seconds) / 60));
+    if (minutes < 60) return `${minutes || 1} мин назад`;
+    if (minutes < 48 * 60) return `${Math.round(minutes / 60)} ч назад`;
+    if (minutes < 14 * 24 * 60) return `${Math.round(minutes / 1440)} дн назад`;
+    return new Date(seconds * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 function renderCard(item) {
     state.item = item;
     state.slides = itemSlides(item);
@@ -141,6 +152,9 @@ function renderCard(item) {
     $('item-rating').title = 'Прогноз: насколько вам понравится';
     $('item-relevance').textContent = `По теме: ${relevance}%`;
     $('item-source').textContent = `Источник: ${item.source || 'неизвестно'}`;
+    const posted = formatPostedAt(item.posted_at);
+    $('item-date').textContent = posted ? `Опубликовано: ${posted}` : '';
+    $('item-date').hidden = !posted;
 
     const link = $('item-source-link');
     const url = safeSourcePostUrl(item);

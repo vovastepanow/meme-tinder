@@ -30,6 +30,7 @@ const API_ROUTES = [
     'database_read' => ['GET', 'route_database_read'],
     'get_current_item' => ['GET', 'route_get_current_item'],
     'settings' => ['GET', 'route_settings'],
+    'discovery_status' => ['GET', 'route_discovery_status'],
     'parser_status' => ['GET', 'route_parser_status'],
 
     'database_add' => ['POST', 'route_database_change'],
@@ -42,6 +43,7 @@ const API_ROUTES = [
     'save_topic' => ['POST', 'route_save_topic'],
     'suggest_sources' => ['POST', 'route_suggest_sources'],
     'source_vote' => ['POST', 'route_source_vote'],
+    'discover_sources' => ['POST', 'route_discover_sources'],
     'debug_reset' => ['POST', 'route_debug_reset'],
 ];
 
@@ -62,6 +64,8 @@ function route_refresh_content($input, $debug) { handle_refresh_content($debug);
 function route_save_topic($input, $debug) { handle_save_topic($input, $debug); }
 function route_suggest_sources($input, $debug) { handle_suggest_sources($input, $debug); }
 function route_source_vote($input, $debug) { handle_source_vote($input, $debug); }
+function route_discover_sources($input, $debug) { handle_discover_sources($debug); }
+function route_discovery_status($input, $debug) { handle_discovery_status($debug); }
 
 function route_debug_reset($input, $debug) {
     if (!$debug) json_error('Сброс доступен только в демо-режиме.', 403);

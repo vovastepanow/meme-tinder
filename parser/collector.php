@@ -2,22 +2,60 @@
 // Фоновый сборщик: посты со всех источников → очередь кандидатов → анализ моделью → пул.
 // Точка входа — run_collector(); её вызывает cron_parser.php.
 
-/** Посты одного канала или паблика. Ошибка одного источника пишется в журнал и не останавливает сбор. */
-function collect_catalog_posts($platform, $label, $source, callable $fetch) {
+/**
+ * Посты одного канала или паблика с учётом активности. Замороженный источник пропускается до времени
+ * перепроверки; после загрузки активность пересчитывается, и источник замораживается или размораживается.
+ * Возвращает [посты (без устаревших), обновлённая запись каталога или null, событие для статистики].
+ */
+function collect_catalog_source($platform, array $entry, $topic) {
+    $id = ltrim(trim((string)($entry['id'] ?? '')), '@');
+    $label = $platform === PLATFORM_TELEGRAM ? '@' . $id : $id;
+    if ($id === '') return [[], null, null];
+    if (is_source_frozen($entry)) return [[], null, 'skipped_frozen'];
+
+    $source = ['id' => $id, 'name' => source_display_name($platform, $entry['name'] ?? $id)];
     echo "Парсинг {$platform} {$label}...\n";
     try {
-        $found = array_map('prepare_external_post', $fetch($source));
-        echo "-> {$platform} {$label}: найдено медиа-постов: " . count($found) . "\n";
-        return $found;
+        if ($platform === PLATFORM_TELEGRAM) {
+            $html = fetch_telegram_channel_page($id);
+            if (!$html) {
+                echo "-> {$platform} {$label}: страница не загрузилась.\n";
+                return [[], null, null];
+            }
+            $posts = telegram_posts_from_html($html, $source, TELEGRAM_POSTS_PER_CHANNEL);
+            $times = telegram_post_times($html);
+        } else {
+            $posts = build_vk_preview_posts($source, VK_POSTS_PER_PUBLIC);
+            $times = array_column($posts, 'posted_at');
+        }
     } catch (Throwable $error) {
         echo "-> {$platform} {$label}: " . $error->getMessage() . "\n";
-        return [];
+        return [[], null, null];
     }
+
+    $activity = source_activity($times);
+    [$updated, $event] = apply_source_activity($entry, $activity);
+    $recheck = 'перепроверка через ' . SOURCE_FROZEN_RECHECK_DAYS . ' дн';
+    if ($event === 'frozen' || $event === 'still_frozen') {
+        echo "-> {$platform} {$label}: " . ($event === 'frozen' ? 'заморожен' : 'всё ещё не активен') . " ({$updated['frozen_reason']}), {$recheck}.\n";
+        return [[], $updated, $event];
+    }
+    if ($event === 'revived') echo "-> {$platform} {$label}: ожил и разморожен (" . describe_source_activity($activity) . ").\n";
+
+    $fresh = array_values(array_filter($posts, function ($post) {
+        return !is_post_outdated($post['posted_at'] ?? 0);
+    }));
+    $old = count($posts) - count($fresh);
+    echo "-> {$platform} {$label}: найдено медиа-постов: " . count($fresh) . ($old ? ", устаревших пропущено: {$old}" : '')
+        . " (" . describe_source_activity($activity) . ").\n";
+    return [array_map('prepare_external_post', $fresh), $updated, $event];
 }
 
-/** Посты со всех источников, сгруппированные по площадкам. */
-function collect_posts_by_platform($database) {
+/** Посты со всех источников текущей темы, сгруппированные по площадкам. */
+function collect_posts_by_platform($database, $topic) {
     $posts_by_platform = [PLATFORM_TELEGRAM => [], PLATFORM_VK => [], PLATFORM_DVACH => []];
+    $stats = ['other_topic' => 0, 'skipped_frozen' => 0, 'frozen' => 0, 'still_frozen' => 0, 'revived' => 0];
+    $updates = [];
 
     foreach (($database['2ch_boards'] ?? []) as $board) {
         echo "Парсинг Двача /" . $board . "/...\n";
@@ -26,31 +64,37 @@ function collect_posts_by_platform($database) {
         array_push($posts_by_platform[PLATFORM_DVACH], ...$found);
     }
 
-    foreach (($database['telegram_channels'] ?? []) as $channel) {
-        $channel_id = ltrim(trim((string)($channel['id'] ?? '')), '@');
-        if ($channel_id === '') continue;
-        $source = ['id' => $channel_id, 'name' => source_display_name(PLATFORM_TELEGRAM, $channel['name'] ?? $channel_id)];
-        array_push($posts_by_platform[PLATFORM_TELEGRAM], ...collect_catalog_posts(PLATFORM_TELEGRAM, '@' . $channel_id, $source, 'telegram_media_posts'));
-    }
-
-    $vk_access_token = '';
+    $vk_connected = true;
     try {
-        $vk_access_token = vk_access_token();
+        $vk_connected = vk_access_token() !== '';
     } catch (Throwable $error) {
         echo "VK OAuth: " . $error->getMessage() . "\n";
+        $vk_connected = false;
     }
-    if ($vk_access_token === '') {
-        echo "VK OAuth не подключен; паблики VK пропущены.\n";
-        return $posts_by_platform;
+    if (!$vk_connected) echo "VK OAuth не подключен; паблики VK пропущены.\n";
+
+    $catalogs = [PLATFORM_TELEGRAM => 'telegram_channels', PLATFORM_VK => 'vk_publics'];
+    foreach ($catalogs as $platform => $key) {
+        if ($platform === PLATFORM_VK && !$vk_connected) continue;
+        foreach (($database[$key] ?? []) as $entry) {
+            if (!catalog_entry_matches_topic($entry, $topic)) {
+                $stats['other_topic']++;
+                continue;
+            }
+            [$posts, $updated, $event] = collect_catalog_source($platform, $entry, $topic);
+            if ($event !== null) $stats[$event]++;
+            if ($updated !== null) $updates[$key . ':' . strtolower((string)$entry['id'])] = $updated;
+            array_push($posts_by_platform[$platform], ...$posts);
+        }
     }
-    foreach (($database['vk_publics'] ?? []) as $public) {
-        $public_id = trim((string)($public['id'] ?? ''));
-        if ($public_id === '') continue;
-        $source = ['id' => $public_id, 'name' => source_display_name(PLATFORM_VK, $public['name'] ?? $public_id)];
-        array_push($posts_by_platform[PLATFORM_VK], ...collect_catalog_posts(PLATFORM_VK, $public_id, $source, function ($source) {
-            return build_vk_preview_posts($source, VK_POSTS_PER_PUBLIC);
-        }));
-    }
+    save_catalog_entry_updates($updates);
+
+    $notes = [];
+    if ($stats['other_topic']) $notes[] = "другой темы: {$stats['other_topic']}";
+    if ($stats['skipped_frozen']) $notes[] = "заморожено (ждут перепроверки): {$stats['skipped_frozen']}";
+    if ($stats['frozen']) $notes[] = "заморожено сейчас: {$stats['frozen']}";
+    if ($stats['revived']) $notes[] = "ожило: {$stats['revived']}";
+    if ($notes) echo "Источники: " . implode(', ', $notes) . ".\n";
     return $posts_by_platform;
 }
 
@@ -63,6 +107,7 @@ function build_candidate_queue($posts_by_platform, $seen_images) {
     foreach ($posts_by_platform as $posts) {
         foreach (expand_post_images($posts) as $item) {
             if (empty($item['image']) || isset($seen_images[$item['image']]) || isset($unique[$item['image']])) continue;
+            if (is_post_outdated($item['posted_at'] ?? 0)) continue; // старше CONTENT_MAX_AGE_DAYS
             $unique[$item['image']] = $item;
         }
     }
@@ -235,7 +280,10 @@ function run_collector() {
     $history = load_data(HISTORY_FILE, empty_history());
     $seen_images = collect_known_images(POOL_FILE, HISTORY_FILE);
 
-    $posts_by_platform = collect_posts_by_platform(load_source_db());
+    $topic = current_topic();
+    if (source_discovery_due(load_source_db(), $topic)) run_source_discovery($topic);
+
+    $posts_by_platform = collect_posts_by_platform(load_source_db(), $topic);
     $candidates = build_candidate_queue($posts_by_platform, $seen_images);
     echo "Тема поиска: «" . current_topic() . "». Кандидатов: " . count($candidates) . "."
         . (PRESCREEN_ENABLED ? " Сначала быстрая оценка по картинке " . PRESCREEN_MAX_SIDE . " px, порог " . PRESCREEN_THRESHOLD . "%." : '') . "\n";

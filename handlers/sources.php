@@ -34,8 +34,8 @@ function dvach_source_candidates($database, array $voted_ids) {
     return $candidates;
 }
 
-/** Каналы Telegram и паблики VK из каталога, по которым ещё не было решения. */
-function catalog_source_candidates($database, $catalog_key, $platform, array $voted_ids) {
+/** Каналы Telegram и паблики VK текущей темы из каталога, по которым ещё не было решения. */
+function catalog_source_candidates($database, $catalog_key, $platform, array $voted_ids, $topic) {
     $id_prefix = $platform === PLATFORM_TELEGRAM ? 'telegram:' : 'vk:';
     $reason = $platform === PLATFORM_TELEGRAM
         ? 'Публичный Telegram-канал с недавними постами.'
@@ -43,6 +43,7 @@ function catalog_source_candidates($database, $catalog_key, $platform, array $vo
 
     $candidates = [];
     foreach (($database[$catalog_key] ?? []) as $entry) {
+        if (!catalog_entry_matches_topic($entry, $topic)) continue;
         $id = ltrim(trim((string)($entry['id'] ?? '')), '@');
         $is_valid = $platform === PLATFORM_TELEGRAM ? is_valid_telegram_channel($id) : is_valid_vk_domain($id);
         $source_id = $id_prefix . strtolower($id);
@@ -77,6 +78,23 @@ function order_candidates_by_platform_votes($candidates, $source_votes) {
 }
 
 /** Решения по источникам: в демо-режиме — из сессии, иначе — из каталога. */
+/** Предложения автоподбора (лучшие первыми) как кандидаты для вкладки «Источники». */
+function suggestion_source_candidates($database, $wanted_platform, array $voted_ids) {
+    $suggestions = $database['source_suggestions'] ?? [];
+    usort($suggestions, function ($a, $b) {
+        return ($b['score'] ?? 0) <=> ($a['score'] ?? 0);
+    });
+    $candidates = [];
+    foreach ($suggestions as $suggestion) {
+        $platform = $suggestion['platform'] ?? '';
+        if (($wanted_platform !== null && $platform !== $wanted_platform) || isset($voted_ids[$suggestion['source_id']])) continue;
+        if ($platform === PLATFORM_VK && !vk_is_connected()) continue; // без токена не показать посты паблика
+        $candidates[] = source_candidate($suggestion['source_id'], $platform, $suggestion['name'], $suggestion['reason'] ?? '',
+            ['id' => $suggestion['id'], 'suggested' => true, 'score' => $suggestion['score'] ?? null]);
+    }
+    return $candidates;
+}
+
 function current_source_votes($database, $debug_mode) {
     return $debug_mode ? debug_state()['source_votes'] : ($database['source_votes'] ?? []);
 }
@@ -92,6 +110,7 @@ function handle_suggest_sources($input, $debug_mode) {
     };
 
     $database = load_source_db();
+    $topic = $debug_mode ? (debug_state()['topic'] ?? DEFAULT_TOPIC) : current_topic();
     $source_votes = current_source_votes($database, $debug_mode);
     $voted_ids = array_flip(array_map('strval', array_column($source_votes, 'source_id')));
 
@@ -100,13 +119,14 @@ function handle_suggest_sources($input, $debug_mode) {
         array_push($candidates, ...dvach_source_candidates($database, $voted_ids));
     }
     if ($includes(PLATFORM_TELEGRAM)) {
-        array_push($candidates, ...catalog_source_candidates($database, 'telegram_channels', PLATFORM_TELEGRAM, $voted_ids));
+        array_push($candidates, ...catalog_source_candidates($database, 'telegram_channels', PLATFORM_TELEGRAM, $voted_ids, $topic));
     }
     $vk_connected = $includes(PLATFORM_VK) && vk_is_connected();
     if ($vk_connected) {
-        array_push($candidates, ...catalog_source_candidates($database, 'vk_publics', PLATFORM_VK, $voted_ids));
+        array_push($candidates, ...catalog_source_candidates($database, 'vk_publics', PLATFORM_VK, $voted_ids, $topic));
     }
 
+    if (!$candidates && !$debug_mode) $candidates = suggestion_source_candidates($database, $wanted_platform, $voted_ids);
     if (!$candidates) {
         $message = $wanted_platform === PLATFORM_VK && !$vk_connected
             ? 'Сначала подключите VK OAuth, чтобы искать паблики.'
@@ -119,6 +139,8 @@ function handle_suggest_sources($input, $debug_mode) {
     } else {
         shuffle($candidates);
     }
+    // Предложения автоподбора показываются первыми: ради них подбор и запускался.
+    if (!$debug_mode) $candidates = array_merge(suggestion_source_candidates($database, $wanted_platform, $voted_ids), $candidates);
 
     foreach (array_slice($candidates, 0, SOURCE_PREVIEW_ATTEMPTS) as $candidate) {
         try {
@@ -152,8 +174,8 @@ function source_vote_record(array $source, $vote) {
     return $record;
 }
 
-/** Добавляет одобренный источник в каталог парсера, если его там ещё нет. */
-function add_approved_source_to_catalog(array $db, array $source) {
+/** Добавляет одобренный источник в каталог парсера, если его там ещё нет. $topic — привязка к теме (для предложений). */
+function add_approved_source_to_catalog(array $db, array $source, $topic = '') {
     $platform = $source['platform'] ?? '';
     $id = ltrim(trim((string)($source['id'] ?? '')), '@');
 
@@ -173,8 +195,64 @@ function add_approved_source_to_catalog(array $db, array $source) {
     $prefix = SOURCE_NAME_PREFIXES[$platform];
     $name = (string)($source['name'] ?? '');
     if (str_starts_with($name, $prefix)) $name = substr($name, strlen($prefix));
-    $db[$catalog_key][] = ['id' => $id, 'name' => mb_substr(trim($name), 0, 200) ?: $id];
+    $entry = ['id' => $id, 'name' => mb_substr(trim($name), 0, 200) ?: $id];
+    if ($topic !== '') $entry['topics'] = [$topic];
+    $db[$catalog_key][] = $entry;
     return $db;
+}
+
+/** Убирает отклонённый канал или паблик из каталога, чтобы парсер его больше не сканировал. */
+function remove_rejected_source_from_catalog(array $db, array $source) {
+    $catalog_key = [PLATFORM_TELEGRAM => 'telegram_channels', PLATFORM_VK => 'vk_publics'][$source['platform'] ?? ''] ?? null;
+    $id = ltrim(trim((string)($source['id'] ?? '')), '@');
+    if ($catalog_key === null || $id === '') return $db;
+    $db[$catalog_key] = array_values(array_filter($db[$catalog_key], function ($entry) use ($id) {
+        return strcasecmp((string)($entry['id'] ?? ''), $id) !== 0;
+    }));
+    return $db;
+}
+
+/** Запустить автоподбор источников по текущей теме (выполнит фоновый парсер). */
+function handle_discover_sources($debug_mode) {
+    if ($debug_mode) json_error('Автоподбор источников отключён в демо-режиме.', 403);
+    request_source_discovery();
+    $parser = start_content_parser_if_needed(true);
+    $message = $parser === 'started'
+        ? 'Автоподбор запущен. Ход поиска — в журнале.'
+        : ($parser === 'running'
+            ? 'Парсер уже работает: автоподбор начнётся при следующем запуске.'
+            : 'Не удалось запустить парсер на сервере.');
+    json_response(['status' => $parser === 'unavailable' ? 'error' : 'success', 'parser' => $parser, 'message' => $message], $parser === 'unavailable' ? 503 : 200);
+}
+
+/** Сводка автоподбора для вкладки «Источники». */
+function handle_discovery_status($debug_mode) {
+    if ($debug_mode) json_response(['enabled' => false]);
+    $db = load_source_db();
+    $topic = current_topic();
+    $auto = 0;
+    $frozen = 0;
+    foreach (['telegram_channels', 'vk_publics'] as $key) {
+        foreach ($db[$key] as $entry) {
+            if (!catalog_entry_matches_topic($entry, $topic)) continue;
+            if (!empty($entry['auto'])) $auto++;
+            if (isset($entry['frozen_until'])) $frozen++;
+        }
+    }
+    $suggestions = count(array_filter($db['source_suggestions'], function ($suggestion) use ($topic) {
+        return mb_strtolower((string)($suggestion['topic'] ?? '')) === mb_strtolower($topic);
+    }));
+    json_response([
+        'enabled' => SOURCE_DISCOVERY_ENABLED,
+        'topic' => $topic,
+        'last_topic' => $db['discovery']['topic'],
+        'last_run' => (int)$db['discovery']['last_run'],
+        'requested' => (bool)$db['discovery']['requested'],
+        'auto_added' => $auto,
+        'suggestions' => $suggestions,
+        'frozen' => $frozen,
+        'vk_connected' => vk_is_connected()
+    ]);
 }
 
 function handle_source_vote($input, $debug_mode) {
@@ -196,7 +274,16 @@ function handle_source_vote($input, $debug_mode) {
     update_data(SOURCES_FILE, create_default_source_catalog(), function ($db) use ($record, $source, $vote) {
         $db = normalize_source_db($db);
         if (!source_vote_exists($db, $record['source_id'])) $db['source_votes'][] = $record;
-        return $vote === 'approve' ? add_approved_source_to_catalog($db, $source) : $db;
+        // Для предложения автоподбора данные берутся с сервера, а не из запроса; само предложение снимается.
+        $topic = '';
+        foreach ($db['source_suggestions'] as $index => $suggestion) {
+            if ($suggestion['source_id'] !== $record['source_id']) continue;
+            $source = ['platform' => $suggestion['platform'], 'id' => $suggestion['id'], 'name' => $suggestion['name']];
+            $topic = (string)($suggestion['topic'] ?? '');
+            unset($db['source_suggestions'][$index]);
+        }
+        $db['source_suggestions'] = array_values($db['source_suggestions']);
+        return $vote === 'approve' ? add_approved_source_to_catalog($db, $source, $topic) : remove_rejected_source_from_catalog($db, $source);
     });
     json_response(['status' => 'success']);
 }

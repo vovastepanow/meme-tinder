@@ -1,26 +1,52 @@
 <?php
 // Каталог источников, стартовые файлы данных и загрузка истории.
+//
+// Каналы Telegram и паблики VK в каталоге могут быть привязаны к темам (поле topics): парсер берёт из них
+// контент, только когда текущая тема поиска есть в списке. Источник без topics используется для любой темы
+// (так работают добавленные вручную). Найденные автоподбором источники привязываются к теме, по которой найдены.
+
+/** Стандартный каталог. Мемные каналы привязаны к теме по умолчанию. */
 function create_default_source_catalog() {
+    $tag = function (array $entries) {
+        return array_map(function ($entry) {
+            return $entry + ['topics' => [DEFAULT_TOPIC]];
+        }, $entries);
+    };
     return [
         '2ch_boards' => ['b', 'me', 'pr', 'r', 'cc', 'a', 'mu', 'd', 's', 'b2'],
-        'vk_publics' => [
+        'vk_publics' => $tag([
             ['id' => 'mrzlk', 'name' => 'MDK'],
             ['id' => 'leprum', 'name' => 'Лепрекон'],
             ['id' => 'sci_one', 'name' => 'Умный Юмор'],
             ['id' => 'british_humor', 'name' => 'БРИТИШ ЮМОР'],
             ['id' => 'bessm_humor', 'name' => 'ОВСЯНКА, СЭР!'],
             ['id' => 'memes_2024', 'name' => 'Мемы на каждый день']
-        ],
-        'telegram_channels' => [
+        ]),
+        'telegram_channels' => $tag([
             ['id' => 'memesdaily', 'name' => 'Мемы каждый день'],
             ['id' => 'this_is_not_funny', 'name' => 'Это не смешно'],
             ['id' => 'humorhub', 'name' => 'Humor Hub'],
             ['id' => 'trashmemes', 'name' => 'Trash memes'],
             ['id' => 'russmemes', 'name' => 'Русские мемы'],
             ['id' => 'memechi', 'name' => 'Meme Chi']
-        ],
-        'source_votes' => []
+        ]),
+        'source_votes' => [],
+        // Найденные автоподбором источники со средней оценкой — ждут решения пользователя.
+        'source_suggestions' => [],
+        // Когда и по какой теме последний раз подбирались источники; requested — подбор заказан кнопкой.
+        'discovery' => ['topic' => '', 'last_run' => 0, 'requested' => false]
     ];
+}
+
+/** Подходит ли источник каталога для темы: без topics — для любой, иначе тема должна быть в списке. */
+function catalog_entry_matches_topic($entry, $topic) {
+    $topics = is_array($entry['topics'] ?? null) ? $entry['topics'] : [];
+    if (!$topics) return true;
+    $topic = mb_strtolower($topic);
+    foreach ($topics as $entry_topic) {
+        if (mb_strtolower((string)$entry_topic) === $topic) return true;
+    }
+    return false;
 }
 
 /**
@@ -60,10 +86,26 @@ function normalize_source_db($db) {
         $normalized[$key] = is_array($db[$key] ?? null) ? array_values($db[$key]) : $defaults[$key];
     }
 
+    // Стандартные каналы из файлов, созданных до привязки к темам, получают тему по умолчанию.
+    $default_topics = [];
+    foreach (['vk_publics', 'telegram_channels'] as $key) {
+        foreach ($defaults[$key] as $entry) $default_topics[$key][strtolower($entry['id'])] = $entry['topics'];
+        foreach ($normalized[$key] as $index => $entry) {
+            if (!is_array($entry) || isset($entry['topics'])) continue;
+            $known = $default_topics[$key][strtolower((string)($entry['id'] ?? ''))] ?? null;
+            if ($known !== null) $normalized[$key][$index]['topics'] = $known;
+        }
+    }
+
     $votes = is_array($db['source_votes'] ?? null) ? $db['source_votes'] : [];
     $normalized['source_votes'] = array_values(array_filter($votes, function($vote) {
         return is_array($vote) && !empty($vote['source_id'] ?? '');
     }));
+    $suggestions = is_array($db['source_suggestions'] ?? null) ? $db['source_suggestions'] : [];
+    $normalized['source_suggestions'] = array_values(array_filter($suggestions, function ($suggestion) {
+        return is_array($suggestion) && !empty($suggestion['source_id'] ?? '');
+    }));
+    $normalized['discovery'] = (is_array($db['discovery'] ?? null) ? $db['discovery'] : []) + $defaults['discovery'];
 
     return $normalized;
 }

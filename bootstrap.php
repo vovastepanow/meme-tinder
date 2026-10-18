@@ -15,3 +15,5 @@ require_once __DIR__ . '/lib/catalog.php';
 require_once __DIR__ . '/lib/media_cache.php';
 require_once __DIR__ . '/lib/settings.php';
 require_once __DIR__ . '/lib/content.php';
+require_once __DIR__ . '/lib/source_activity.php';
+require_once __DIR__ . '/lib/source_discovery.php';

@@ -1,5 +1,5 @@
 // sources.js — вкладка «Подбор источников»: поиск каналов и тредов, решения по ним и подключение VK.
-import { $, api, apiUrl, el, hide, log, onTabOpen, setMessage, show } from './core.js';
+import { $, DEBUG_MODE, api, apiUrl, el, hide, log, onParserStateChange, onTabOpen, setMessage, show, watchParser } from './core.js';
 
 const VK_REDIRECT_MESSAGES = {
     connected: 'VK подключён.',
@@ -51,6 +51,7 @@ function showDiscoveredSource(source) {
     discoveredSource = source;
     $('inspect-source-name').textContent = `Источник: ${source.name}`;
     $('inspect-source-reason').textContent = source.reason || '';
+    $('inspect-source-score').textContent = source.suggested && source.score != null ? `Найден нейросетью · оценка ${source.score}%` : '';
     $('posts-grid').replaceChildren(...(source.posts || []).map(renderPostTile).filter(Boolean));
     show('source-inspection-zone');
 }
@@ -108,11 +109,68 @@ export function consumeVkRedirectResult() {
     return true;
 }
 
+// ---- Автоподбор источников по теме ----
+
+function formatAgo(timestamp) {
+    if (!timestamp) return 'ещё не выполнялся';
+    const minutes = Math.round((Date.now() / 1000 - timestamp) / 60);
+    if (minutes < 1) return 'только что';
+    if (minutes < 60) return `${minutes} мин назад`;
+    const hours = Math.round(minutes / 60);
+    return hours < 48 ? `${hours} ч назад` : `${Math.round(hours / 24)} дн назад`;
+}
+
+async function loadDiscoveryStatus() {
+    if (DEBUG_MODE) {
+        $('discovery-status').textContent = 'В демо-режиме автоподбор отключён.';
+        $('discovery-button').disabled = true;
+        return;
+    }
+    try {
+        const data = await api('discovery_status');
+        const sameTopic = (data.last_topic || '').toLowerCase() === (data.topic || '').toLowerCase();
+        const parts = [
+            `Тема «${data.topic}».`,
+            sameTopic && data.last_run ? `Последний подбор: ${formatAgo(data.last_run)}.` : 'По этой теме подбора ещё не было.',
+            `В каталоге найденных: ${data.auto_added}, ждут вашего решения: ${data.suggestions}.`
+        ];
+        if (data.frozen) parts.push(`Заморожено из-за редких постов: ${data.frozen} (перепроверяются раз в несколько дней).`);
+        if (data.requested) parts.push('Подбор заказан — начнётся при запуске парсера.');
+        if (!data.vk_connected) parts.push('Подключите VK, чтобы искать и сообщества ВКонтакте.');
+        $('discovery-status').textContent = parts.join(' ');
+    } catch (error) {
+        $('discovery-status').textContent = `Сведения недоступны: ${error.message}`;
+    }
+}
+
+async function startDiscovery() {
+    const button = $('discovery-button');
+    button.disabled = true;
+    try {
+        const data = await api('discover_sources', { body: null });
+        log(data.message);
+        watchParser();
+    } catch (error) {
+        setMessage('source-error', `Автоподбор не запущен: ${error.message}`);
+    } finally {
+        button.disabled = false;
+        loadDiscoveryStatus();
+    }
+}
+
 export function initializeSourceTab() {
     $('source-search-button').addEventListener('click', findNewSource);
     $('vk-oauth-button').addEventListener('click', () => window.location.assign(apiUrl('vk_oauth_start')));
     document.querySelectorAll('#source-inspection-zone [data-source-vote]').forEach(button => {
         button.addEventListener('click', () => voteSource(button.dataset.sourceVote));
     });
-    onTabOpen('source-tab', loadVkOAuthStatus);
+    $('discovery-button').addEventListener('click', startDiscovery);
+    onTabOpen('source-tab', () => {
+        loadVkOAuthStatus();
+        loadDiscoveryStatus();
+    });
+    // Парсер закончил работу — возможно, подбор нашёл новые источники.
+    onParserStateChange(running => {
+        if (!running && $('source-tab').classList.contains('active')) loadDiscoveryStatus();
+    });
 }
