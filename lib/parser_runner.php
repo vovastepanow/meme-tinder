@@ -1,6 +1,7 @@
 <?php
 // Запуск фонового парсера (cron_parser.php) и чтение его журнала.
-// ---- Background parser ----
+
+const PARSER_ACTIVITY_LINES = 200;
 
 /** Последние строки лога парсера для консоли. Строки не обрезаются: в них могут быть полные размышления модели. */
 function meme_parser_activity() {
@@ -8,12 +9,12 @@ function meme_parser_activity() {
     if (!is_array($lines)) return [];
 
     $activity = [];
-    foreach (array_slice($lines, -200) as $line) {
+    foreach (array_slice($lines, -PARSER_ACTIVITY_LINES) as $line) {
         $line = trim(preg_replace('/\s+/u', ' ', $line) ?? $line);
         if ($line === '' || str_starts_with($line, 'PHP Warning:')) continue;
         $activity[] = $line;
     }
-    return array_slice($activity, -200);
+    return $activity;
 }
 
 function meme_parser_process_running($pid) {
@@ -25,6 +26,10 @@ function meme_parser_process_running($pid) {
     return function_exists('posix_kill') && @posix_kill($pid, 0);
 }
 
+/**
+ * Запускает парсер в фоне, если он ещё не работает. $force — запуск без учёта паузы между запусками.
+ * Возвращает 'started', 'running', 'cooldown' или 'unavailable'.
+ */
 function start_meme_parser_if_needed($force = false) {
     if (!function_exists('exec')) return 'unavailable';
     $state_file = parser_runtime_file('.json');
@@ -41,7 +46,7 @@ function start_meme_parser_if_needed($force = false) {
 function launch_meme_parser_locked($state_file, $force) {
     $state = json_decode(@file_get_contents($state_file), true) ?: [];
     if (meme_parser_process_running((int)($state['pid'] ?? 0))) return 'running';
-    if (!$force && !empty($state['started_at']) && time() - (int)$state['started_at'] < 600) return 'cooldown';
+    if (!$force && !empty($state['started_at']) && time() - (int)$state['started_at'] < PARSER_COOLDOWN_SECONDS) return 'cooldown';
 
     $php_binary = PHP_BINARY;
     if ($php_binary === '' || !is_executable($php_binary)) $php_binary = '/usr/bin/php';

@@ -1,4 +1,5 @@
 <?php
+// HTTP-запросы через curl и вызовы локальной Ollama с журналом обмена с моделью.
 
 function http_get($url, array $options = []) {
     $ch = curl_init($url);
@@ -96,14 +97,7 @@ function ollama_post(array $payload, $timeout) {
     return $response;
 }
 
-// Lenient call: any failure yields an empty array.
-function generate_local(array $payload, $timeout = 90) {
-    $response = ollama_post($payload, $timeout)['body'];
-    $result = is_string($response) ? json_decode($response, true) : null;
-    return is_array($result) ? $result : [];
-}
-
-// Strict call: failures are reported as exceptions.
+/** Запрос к модели. Любая ошибка (сеть, HTTP, некорректный ответ) — исключение. */
 function ai_generate_local($model, $prompt, $images = [], $format = null, array $options = []) {
     $payload = ['model' => $model, 'prompt' => $prompt, 'stream' => false];
     if ($images) $payload['images'] = $images;

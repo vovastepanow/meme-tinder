@@ -1,14 +1,14 @@
 <?php
 // Кандидаты для ИИ и пул мемов: нормализация постов, учёт уже виденных картинок, безопасная запись в пул.
 
-// Подпись поста для ИИ: на Дваче комментарий почти всегда не относится к картинке, поэтому его не передаём
+/** Подпись поста для ИИ. На Дваче комментарий почти всегда не относится к картинке, поэтому его не передаём. */
 function post_caption_for_ai($meme) {
-    if (str_starts_with((string)($meme['source'] ?? ''), 'Двач /')) return '';
+    if (meme_platform($meme) === PLATFORM_DVACH) return '';
     $text = trim((string)($meme['text'] ?? ''));
-    return $text === 'Пост без текста' ? '' : $text;
+    return $text === EMPTY_POST_TEXT ? '' : $text;
 }
 
-// Нормализует пост из любого источника к одной форме кандидата
+/** Приводит пост из Telegram или VK к форме кандидата. */
 function prepare_external_post($post) {
     $post['source_url'] = $post['url'] ?? ($post['source_url'] ?? '');
     $post['captions'] = array_fill(0, count($post['images'] ?? []), $post['text'] ?? '');
@@ -16,7 +16,7 @@ function prepare_external_post($post) {
     return $post;
 }
 
-/** Splits a post with several pictures into one candidate per picture. */
+/** Делит пост с несколькими картинками на отдельных кандидатов — по одному на картинку. */
 function expand_post_images($posts) {
     $candidates = [];
     foreach ($posts as $post) {
@@ -35,41 +35,32 @@ function expand_post_images($posts) {
     return $candidates;
 }
 
-function meme_platform($meme) {
-    $source = (string)($meme['source'] ?? '');
-    if (str_starts_with($source, 'Telegram |')) return 'Telegram';
-    if (str_starts_with($source, 'ВКонтакте |')) return 'ВКонтакте';
-    return 'Двач';
-}
-
-// Все изображения, которые уже лежат в пуле или уже оценены (читается заново с диска)
+/** Все картинки, которые уже лежат в пуле или уже оценены (читается заново с диска). Ключи — адреса картинок. */
 function collect_known_images($pool_file, $history_file) {
-    $known = array_column(load_data($pool_file, []), 'image');
+    $known = array_map('meme_image_key', load_data($pool_file, []));
     $history = load_data($history_file, []);
     foreach (HISTORY_COLLECTIONS as $key) {
         $known = array_merge($known, array_column($history[$key] ?? [], 'image'));
     }
-    return array_flip(array_filter($known, 'is_string'));
+    return array_flip(array_filter($known, function ($image) {
+        return is_string($image) && $image !== '';
+    }));
 }
 
-// Добавляет мем в пул, не затирая изменения, сделанные пока парсер работал (голосование пользователя)
+/**
+ * Добавляет мем в пул под блокировкой, не затирая голоса пользователя, сделанные пока парсер работал.
+ * Возвращает true, если мем добавлен (false — он уже в пуле или уже оценён).
+ */
 function add_meme_to_pool_safely($pool_file, $history_file, $meme) {
-    $lock = @fopen($pool_file . '.lock', 'c+');
-    if ($lock) flock($lock, LOCK_EX);
-    try {
-        $known = collect_known_images($pool_file, $history_file);
-        $pool = load_data($pool_file, []);
-        if (isset($known[$meme['image']])) {
-            return [false, $pool];
-        }
+    $added = false;
+    update_data($pool_file, [], function ($pool) use ($pool_file, $history_file, $meme, &$added) {
+        if (isset(collect_known_images($pool_file, $history_file)[$meme['image']])) return null;
         $pool[] = $meme;
-        usort($pool, function ($a, $b) { return ($b['rating'] ?? 0) <=> ($a['rating'] ?? 0); });
-        save_data($pool_file, $pool);
-        return [true, $pool];
-    } finally {
-        if ($lock) {
-            flock($lock, LOCK_UN);
-            fclose($lock);
-        }
-    }
+        usort($pool, function ($a, $b) {
+            return ($b['rating'] ?? 0) <=> ($a['rating'] ?? 0);
+        });
+        $added = true;
+        return $pool;
+    });
+    return $added;
 }

@@ -1,6 +1,22 @@
 <?php
-// Демо-данные для режима ?debug=1 (без Ollama и без записи в файлы проекта).
-// ---- Demo mode and default data ----
+// Демо-режим ?debug=1: состояние живёт в PHP-сессии, Ollama не вызывается, файлы проекта не меняются.
+// Здесь же стартовый пул для нового проекта.
+
+const DEBUG_SESSION_KEY = 'meme_tinder_debug';
+
+/** Состояние демо-режима в сессии (по ссылке). Создаётся при первом обращении. */
+function &debug_state() {
+    ensure_session_started();
+    if (!isset($_SESSION[DEBUG_SESSION_KEY]) || !is_array($_SESSION[DEBUG_SESSION_KEY])) {
+        $_SESSION[DEBUG_SESSION_KEY] = debug_initial_state();
+    }
+    return $_SESSION[DEBUG_SESSION_KEY];
+}
+
+function debug_reset_state() {
+    ensure_session_started();
+    $_SESSION[DEBUG_SESSION_KEY] = debug_initial_state();
+}
 
 function debug_image($title, $background, $accent) {
     $title = htmlspecialchars($title, ENT_QUOTES | ENT_XML1, 'UTF-8');
@@ -15,7 +31,6 @@ function debug_initial_state() {
             ['image' => debug_image('ОЖИДАНИЕ / РЕАЛЬНОСТЬ', '#58734b', '#f1c453'), 'text' => 'Открыл одну вкладку. Через час их уже двадцать семь.', 'ai_description' => 'Шутка о привычке отвлекаться в интернете.', 'rating' => 76, 'source' => 'Локальный тест']
         ],
         'history' => empty_history(),
-        'source_index' => 0,
         'source_votes' => []
     ];
 }

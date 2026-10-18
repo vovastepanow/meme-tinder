@@ -1,10 +1,7 @@
-// image-viewer.js — Полноэкранный просмотр изображений: зум колесом и перетаскивание.
+// image-viewer.js — полноэкранный просмотр изображений: зум колесом и перетаскивание.
 const IMAGE_VIEWER_MAX_ZOOM = 5;
-
 const IMAGE_VIEWER_CLICK_TOLERANCE = 4;
-
 const IMAGE_VIEWER_MIN_FILL = 0.7;
-
 const IMAGE_VIEWER_VISIBLE_EDGE = 60;
 
 const imageViewerState = { zoom: 1, x: 0, y: 0, drag: null };
@@ -16,8 +13,7 @@ function applyImageViewerTransform() {
     image.classList.toggle('is-zoomed', zoom > 1);
 }
 
-/** Small images are upscaled to fill at least IMAGE_VIEWER_MIN_FILL of the screen; large ones shrink to fit. */
-
+/** Маленькие картинки увеличиваются минимум до IMAGE_VIEWER_MIN_FILL экрана, большие уменьшаются до размера окна. */
 function fitImageViewer() {
     const image = document.getElementById('image-viewer-image');
     if (!image.naturalWidth || !image.naturalHeight) return;
@@ -27,8 +23,7 @@ function fitImageViewer() {
     image.style.height = `${Math.round(image.naturalHeight * scale)}px`;
 }
 
-/** Lets the image move freely but keeps at least IMAGE_VIEWER_VISIBLE_EDGE pixels of it on screen. */
-
+/** Картинку можно двигать свободно, но на экране всегда остаётся хотя бы IMAGE_VIEWER_VISIBLE_EDGE пикселей. */
 function clampImageViewerOffset() {
     const image = document.getElementById('image-viewer-image');
     const maxX = Math.max(0, (window.innerWidth + image.offsetWidth * imageViewerState.zoom) / 2 - IMAGE_VIEWER_VISIBLE_EDGE);
@@ -41,7 +36,7 @@ function zoomImageViewer(factor, clientX, clientY) {
     const previousZoom = imageViewerState.zoom;
     const zoom = Math.max(1, Math.min(IMAGE_VIEWER_MAX_ZOOM, previousZoom * factor));
     if (zoom === previousZoom) return;
-    // Zoom around the cursor: the point under the pointer stays in place.
+    // Зум вокруг курсора: точка под указателем остаётся на месте.
     const pointX = clientX - window.innerWidth / 2;
     const pointY = clientY - window.innerHeight / 2;
     const ratio = zoom / previousZoom;
@@ -76,7 +71,7 @@ function closeImageViewer() {
     imageViewerState.drag = null;
 }
 
-function initializeImageViewer() {
+export function initializeImageViewer() {
     const viewer = document.getElementById('image-viewer');
     const image = document.getElementById('image-viewer-image');
 

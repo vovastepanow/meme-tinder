@@ -1,71 +1,87 @@
 <?php
-// index.php — JSON API для фронтенда (index.html / js/). Только маршрутизация: логика в lib/ и handlers/.
-require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/project_storage.php';
-require_once __DIR__ . '/http_client.php';
-require_once __DIR__ . '/sources/common.php';
-require_once __DIR__ . '/sources/dvach.php';
-require_once __DIR__ . '/sources/telegram.php';
-require_once __DIR__ . '/sources/vk.php';
-require_once __DIR__ . '/image_input.php';
-require_once __DIR__ . '/meme_analysis.php';
+// index.php — JSON API для интерфейса (index.html, js/). Здесь только маршрутизация: логика в lib/ и handlers/.
+require_once __DIR__ . '/bootstrap.php';
 
-require_once __DIR__ . '/lib/demo.php';
-require_once __DIR__ . '/lib/catalog.php';
-require_once __DIR__ . '/lib/parser_runner.php';
-require_once __DIR__ . '/lib/memes.php';
-require_once __DIR__ . '/lib/database_editor.php';
 require_once __DIR__ . '/lib/http_json.php';
+require_once __DIR__ . '/lib/demo.php';
+require_once __DIR__ . '/lib/parser_runner.php';
+require_once __DIR__ . '/lib/database_editor.php';
 require_once __DIR__ . '/lib/vk_oauth.php';
 
 require_once __DIR__ . '/handlers/database.php';
 require_once __DIR__ . '/handlers/memes.php';
 require_once __DIR__ . '/handlers/sources.php';
 
-// ---- Dispatch ----
+// Любая непойманная ошибка становится JSON-ответом, а не HTML-страницей PHP.
+set_exception_handler(function (Throwable $error) {
+    error_log('Meme Tinder API error: ' . $error);
+    json_error('Внутренняя ошибка сервера: ' . $error->getMessage(), 500);
+});
 
-$action = $_GET['action'] ?? '';
-$debug_mode = ($_GET['debug'] ?? '') === '1';
-ensure_default_project_data();
+/**
+ * action => [HTTP-метод, обработчик]. Обработчик получает ($input, $debug_mode, $action)
+ * и всегда завершает запрос сам (json_response или редирект).
+ */
+const API_ROUTES = [
+    'vk_oauth_status' => ['GET', 'route_vk_oauth_status'],
+    'vk_oauth_start' => ['GET', 'route_vk_oauth_start'],
+    'vk_oauth_callback' => ['GET', 'route_vk_oauth_callback'],
+    'database_options' => ['GET', 'route_database_options'],
+    'database_read' => ['GET', 'route_database_read'],
+    'get_current_meme' => ['GET', 'route_get_current_meme'],
 
-if ($debug_mode) {
-    ensure_session_started();
-    if (!isset($_SESSION['meme_tinder_debug'])) {
-        $_SESSION['meme_tinder_debug'] = debug_initial_state();
-    }
+    'database_add' => ['POST', 'route_database_change'],
+    'database_update' => ['POST', 'route_database_change'],
+    'database_delete' => ['POST', 'route_database_change'],
+    'analyze_image' => ['POST', 'route_analyze_image'],
+    'meme_vote' => ['POST', 'route_meme_vote'],
+    'refresh_memes' => ['POST', 'route_refresh_memes'],
+    'suggest_sources' => ['POST', 'route_suggest_sources'],
+    'source_vote' => ['POST', 'route_source_vote'],
+    'debug_reset' => ['POST', 'route_debug_reset'],
+];
+
+// Тонкие адаптеры к единой сигнатуре маршрута.
+function route_vk_oauth_status($input, $debug) { handle_vk_oauth_status($debug); }
+function route_vk_oauth_start($input, $debug) { handle_vk_oauth_start($debug); }
+function route_vk_oauth_callback($input, $debug) { handle_vk_oauth_callback(); }
+function route_database_options($input, $debug) { handle_database_options($debug); }
+function route_database_read($input, $debug) { handle_database_read($debug); }
+function route_get_current_meme($input, $debug) { handle_get_current_meme($debug); }
+function route_database_change($input, $debug, $action) { handle_database_change($action, $input, $debug); }
+function route_analyze_image($input, $debug) { handle_analyze_image($input, $debug); }
+function route_meme_vote($input, $debug) { handle_meme_vote($input, $debug); }
+function route_refresh_memes($input, $debug) { handle_refresh_memes($debug); }
+function route_suggest_sources($input, $debug) { handle_suggest_sources($input, $debug); }
+function route_source_vote($input, $debug) { handle_source_vote($input, $debug); }
+
+function route_debug_reset($input, $debug) {
+    if (!$debug) json_error('Сброс доступен только в демо-режиме.', 403);
+    debug_reset_state();
+    json_response(['status' => 'success', 'debug' => true]);
 }
 
-// Every handler terminates the request (json_response / redirect), so cases need no break.
-if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    switch ($action) {
-        case 'vk_oauth_status': handle_vk_oauth_status($debug_mode);
-        case 'vk_oauth_start': handle_vk_oauth_start($debug_mode);
-        case 'vk_oauth_callback': handle_vk_oauth_callback();
-        case 'database_options': handle_database_options($debug_mode);
-        case 'database_read': handle_database_read($debug_mode);
-        case 'get_current_meme': handle_get_current_meme($debug_mode);
+function dispatch_api_request() {
+    $action = (string)($_GET['action'] ?? '');
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    $debug_mode = ($_GET['debug'] ?? '') === '1';
+
+    $route = API_ROUTES[$action] ?? null;
+    if ($route === null) json_error('Неизвестное действие API.', 404);
+    [$route_method, $handler] = $route;
+    if ($method !== $route_method) {
+        header('Allow: ' . $route_method);
+        json_error('Метод ' . $method . ' не поддерживается для этого действия.', 405);
     }
+
+    $input = [];
+    if ($method === 'POST') {
+        require_api_request_header();
+        $input = request_json_body();
+    }
+
+    if (!$debug_mode) ensure_default_project_data();
+    $handler($input, $debug_mode, $action);
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    header('Content-Type: application/json');
-    $input = json_decode(file_get_contents('php://input'), true);
-
-    switch ($action) {
-        case 'database_add':
-        case 'database_update':
-        case 'database_delete':
-            handle_database_change($action, $input, $debug_mode);
-        case 'analyze_image': handle_analyze_image($input, $debug_mode);
-        case 'debug_reset':
-            if ($debug_mode) {
-                $_SESSION['meme_tinder_debug'] = debug_initial_state();
-                json_response(['status' => 'success', 'debug' => true]);
-            }
-            break;
-        case 'meme_vote': handle_meme_vote($input, $debug_mode);
-        case 'suggest_sources': handle_suggest_sources($input);
-        case 'source_vote': handle_source_vote($input);
-        case 'refresh_memes': handle_refresh_memes($debug_mode);
-    }
-}
+dispatch_api_request();

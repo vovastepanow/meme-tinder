@@ -1,69 +1,78 @@
-// test.js — Вкладка «Тест ИИ»: оценка загруженного изображения или ссылки.
-function showTestPreview(file) {
-    const preview = document.getElementById('test-image');
-    if (preview.dataset.objectUrl) URL.revokeObjectURL(preview.dataset.objectUrl);
-    preview.dataset.objectUrl = file ? URL.createObjectURL(file) : '';
-    if (file) {
-        preview.src = preview.dataset.objectUrl;
-        document.getElementById('image-url').value = '';
-    } else {
-        preview.removeAttribute('src');
-    }
-    document.getElementById('test-result').style.display = 'none';
+// test.js — вкладка «Тест ИИ»: оценка загруженного файла или изображения по ссылке.
+import { $, api, el, hide, setMessage, show } from './core.js';
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+let previewObjectUrl = '';
+
+/** Показывает превью: файл (через object URL), ссылку или ничего. */
+function setPreview(source) {
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = source instanceof File ? URL.createObjectURL(source) : '';
+    const preview = $('test-image');
+    const url = previewObjectUrl || (typeof source === 'string' ? source : '');
+    if (url) preview.src = url;
+    else preview.removeAttribute('src');
+}
+
+function onFileChosen(event) {
+    const file = event.target.files[0] || null;
+    if (file) $('image-url').value = '';
+    setPreview(file);
+    hide('test-result');
+}
+
+function onUrlInput() {
+    if (!$('image-url').value) return;
+    $('image-file').value = '';
+    setPreview(null);
+}
+
+function renderResult(data) {
+    $('test-rating').textContent = `🔮 ${Number(data.rating)}%`;
+    $('test-model').textContent = `Оценка по истории лайков и дизлайков · ${data.model}`;
+    $('test-description').replaceChildren(el('strong', { textContent: 'ИИ описание:' }), ` ${data.description || 'Описание не получено'}`);
+    $('test-why-funny').textContent = data.why_funny ? `Почему смешно: ${data.why_funny}` : '';
+    $('test-is-funny').textContent = `Смешно? ${data.is_funny ? 'Да' : 'Нет'}`;
+    show('test-result');
 }
 
 async function analyzeTestImage(event) {
     event.preventDefault();
-    const fileInput = document.getElementById('image-file');
-    const urlInput = document.getElementById('image-url');
-    const file = fileInput.files[0];
-    const imageUrl = urlInput.value.trim();
-    const error = document.getElementById('test-error');
+    const file = $('image-file').files[0];
+    const imageUrl = $('image-url').value.trim();
 
-    error.style.display = 'none';
-    error.textContent = '';
-    document.getElementById('test-result').style.display = 'none';
+    setMessage('test-error', '');
+    hide('test-result');
     if (!file && !imageUrl) {
-        error.textContent = 'Добавьте ссылку или выберите файл изображения.';
-        error.style.display = 'block';
+        setMessage('test-error', 'Добавьте ссылку или выберите файл изображения.');
         return;
     }
-    if (file && file.size > 10 * 1024 * 1024) {
-        error.textContent = 'Файл больше 10 МБ. Выберите изображение поменьше.';
-        error.style.display = 'block';
+    if (file && file.size > MAX_IMAGE_BYTES) {
+        setMessage('test-error', 'Файл больше 10 МБ. Выберите изображение поменьше.');
         return;
     }
 
-    const button = document.getElementById('analyze-button');
+    const button = $('analyze-button');
     button.disabled = true;
-    document.getElementById('test-loading').style.display = 'block';
+    show('test-loading');
     try {
         const body = new FormData();
         if (file) body.append('image_file', file);
         else body.append('image_url', imageUrl);
-
-        const response = await fetch(apiUrl('analyze_image'), { method: 'POST', body });
-        const data = await response.json();
-        logAiExchanges(data.ai_log);
-        if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
-
-        if (!file) {
-            const preview = document.getElementById('test-image');
-            if (preview.dataset.objectUrl) URL.revokeObjectURL(preview.dataset.objectUrl);
-            preview.dataset.objectUrl = '';
-            preview.src = imageUrl;
-        }
-        document.getElementById('test-rating').textContent = `🔮 ${Number(data.rating)}%`;
-        document.getElementById('test-model').textContent = `Оценка по истории лайков и дизлайков · ${data.model}`;
-        document.getElementById('test-description').innerHTML = `<strong>ИИ описание:</strong> ${escapeHtml(data.description || 'Описание не получено')}`;
-        document.getElementById('test-why-funny').textContent = data.why_funny ? `Почему смешно: ${data.why_funny}` : '';
-        document.getElementById('test-is-funny').textContent = `Смешно? ${data.is_funny ? 'Да' : 'Нет'}`;
-        document.getElementById('test-result').style.display = 'block';
-    } catch (e) {
-        error.textContent = `Не удалось оценить изображение: ${e.message}`;
-        error.style.display = 'block';
+        const data = await api('analyze_image', { body });
+        if (!file) setPreview(imageUrl);
+        renderResult(data);
+    } catch (error) {
+        setMessage('test-error', `Не удалось оценить изображение: ${error.message}`);
     } finally {
-        document.getElementById('test-loading').style.display = 'none';
+        hide('test-loading');
         button.disabled = false;
     }
+}
+
+export function initializeTestTab() {
+    $('image-file').addEventListener('change', onFileChosen);
+    $('image-url').addEventListener('input', onUrlInput);
+    $('analyze-form').addEventListener('submit', analyzeTestImage);
 }

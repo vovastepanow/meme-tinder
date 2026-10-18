@@ -1,4 +1,8 @@
-/* main-layout.css */
+/* main-layout.css — каркас страницы, вкладки и журнал приложения. */
+
+/* Атрибут hidden всегда прячет элемент, даже если класс задаёт ему display. */
+[hidden] { display: none !important; }
+
 body {
     background-color: #0c0c0e;
     color: #e4e4e7;
@@ -13,7 +17,10 @@ body {
 }
 .tabs {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 12px;
+    max-width: 100%;
     margin-bottom: 25px;
 }
 .view-panel {
@@ -27,10 +34,10 @@ body {
 .view-panel.active {
     display: flex;
 }
-.tabs {
-    max-width: 100%;
-    flex-wrap: wrap;
-    justify-content: center;
+/* Вкладка ждёт ответа сервера (например, сохраняет голос). */
+.view-panel.is-busy {
+    opacity: 0.3;
+    pointer-events: none;
 }
 .activity-console {
     width: min(100%, 900px);
@@ -44,7 +51,6 @@ body {
     color: #d1fae5;
     font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
 }
-.activity-console[hidden] { display: none; }
 .activity-console-header {
     display: flex;
     align-items: center;
@@ -73,7 +79,6 @@ body {
     cursor: pointer;
 }
 .activity-console-follow:hover { border-color: #4ade80; }
-.activity-console-follow[hidden] { display: none; }
 .console-indicator {
     width: 7px;
     height: 7px;

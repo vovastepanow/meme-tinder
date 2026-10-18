@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Умная ИИ Мемо-Панель</title>
-    <!-- Подключение внешних стилей оформления -->
-    <link rel="stylesheet" href="css/main-layout.css?v=20261018-03">
-    <link rel="stylesheet" href="css/components.css?v=20261018-03">
-    <link rel="stylesheet" href="css/overlays.css?v=20261018-03">
+    <link rel="stylesheet" href="css/main-layout.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/overlays.css">
+    <script type="module" src="js/main.js"></script>
 </head>
 <body>
 
@@ -17,31 +17,30 @@
     </section>
 
     <main class="app-main">
-    <div class="tabs">
-        <button class="tab-btn active" onclick="switchTab('meme-tab', this)">🗿 Оценка Мемов</button>
-        <button class="tab-btn" onclick="switchTab('source-tab', this)">🔎 Подбор Источников</button>
-        <button class="tab-btn" onclick="switchTab('test-tab', this)">🧪 Тест ИИ</button>
-        <button class="tab-btn" data-tab-id="database-tab" onclick="switchTab('database-tab', this)">🗄️ Базы данных</button>
-    </div>
+    <nav class="tabs" role="tablist">
+        <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-tab="meme-tab">🗿 Оценка Мемов</button>
+        <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="source-tab">🔎 Подбор Источников</button>
+        <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="test-tab">🧪 Тест ИИ</button>
+        <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="database-tab">🗄️ Базы данных</button>
+    </nav>
 
-
-    <div id="debug-banner" class="debug-banner" style="display: none;">
-        <span>ДЕМО-РЕЖИМ: Ollama не используется, данные не сохраняются в файлы проекта</span>
-        <button type="button" onclick="resetDebugDemo()">Сбросить демо</button>
+    <div id="debug-banner" class="debug-banner" hidden>
+        <span>ДЕМО-РЕЖИМ: данные хранятся только в этой сессии и не сохраняются в файлы проекта</span>
+        <button id="debug-reset-button" type="button">Сбросить демо</button>
     </div>
 
     <!-- ВКЛАДКА 1: ОЦЕНКА МЕМОВ -->
     <div id="meme-tab" class="view-panel active">
         <div id="meme-loading" class="status-msg">Загрузка мема...</div>
-        <div id="meme-error" class="status-msg error-msg" role="alert" style="display: none;"></div>
+        <div id="meme-error" class="status-msg error-msg" role="alert" hidden></div>
 
-        <div id="meme-card-wrapper" style="display: none; width: 100%;">
+        <div id="meme-card-wrapper" class="meme-card-wrapper" hidden>
             <div class="card">
                 <div class="media-shell">
                     <button id="carousel-prev" class="carousel-btn" type="button" aria-label="Предыдущая картинка">‹</button>
                     <div class="img-wrap">
-                        <video id="meme-video" controls muted loop playsinline preload="metadata" style="display: none;"></video>
-                        <img id="meme-image" src="" alt="Мем">
+                        <video id="meme-video" controls muted loop playsinline preload="metadata" hidden></video>
+                        <img id="meme-image" alt="Мем" hidden>
                     </div>
                     <button id="carousel-next" class="carousel-btn" type="button" aria-label="Следующая картинка">›</button>
                 </div>
@@ -53,7 +52,7 @@
                     <span id="meme-rating" class="badge">🔮 0%</span>
                     <div id="meme-source" class="source-text">📍 Источник: --</div>
                     <a id="meme-source-link" class="source-post-link" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a>
-                    <div id="meme-why-funny" class="meme-ai-note"><strong>Почему смешно:</strong> <span></span></div>
+                    <div id="meme-why-funny" class="meme-ai-note"><strong>Почему смешно:</strong> <span id="meme-why-funny-text"></span></div>
                     <span id="meme-is-funny" class="meme-funny-badge">Смешно? --</span>
                     <div id="meme-desc" class="desc-text"><strong>ИИ Описание:</strong> --</div>
                 </div>
@@ -67,18 +66,18 @@
                         <button type="button" role="menuitem" data-reason="other">Другое</button>
                     </div>
                 </div>
-                <button class="btn" onclick="voteMeme('postpone')" title="Отложить: без оценки, в конец очереди">✋</button>
-                <button class="btn" onclick="voteMeme('dislike')" title="Треш">💩</button>
-                <button class="btn" onclick="voteMeme('maybe')" title="Не знаю">🤷‍♂️</button>
-                <button class="btn" onclick="voteMeme('like')" title="Годно">🗿</button>
+                <button class="btn" type="button" data-vote="postpone" title="Отложить: без оценки, в конец очереди" aria-label="Отложить">✋</button>
+                <button class="btn" type="button" data-vote="dislike" title="Треш" aria-label="Треш">💩</button>
+                <button class="btn" type="button" data-vote="maybe" title="Не знаю" aria-label="Не знаю">🤷‍♂️</button>
+                <button class="btn" type="button" data-vote="like" title="Годно" aria-label="Годно">🗿</button>
             </div>
         </div>
 
-        <div id="meme-empty" class="status-msg meme-empty" style="display: none;">
+        <div id="meme-empty" class="status-msg meme-empty" hidden>
             <span id="meme-empty-message">Пул мемов пуст.</span>
             <div class="meme-empty-actions">
                 <button id="meme-search-button" class="meme-add-button" type="button">Найти мемы</button>
-                <button class="meme-add-button secondary" type="button" onclick="openEmptyMemeEditor()">Добавить мем</button>
+                <button id="meme-add-button" class="meme-add-button secondary" type="button">Добавить мем</button>
             </div>
         </div>
     </div>
@@ -95,27 +94,27 @@
                     <option value="dvach">Двач</option>
                 </select>
             </label>
-            <button class="tab-btn search-trigger" onclick="findNewSources()">🔎 Найти новый источник</button>
+            <button id="source-search-button" class="tab-btn search-trigger" type="button">🔎 Найти новый источник</button>
             <div class="vk-auth-actions">
-                <button id="vk-oauth-button" class="vk-oauth-button" type="button" onclick="startVkOAuth()">Подключить VK</button>
+                <button id="vk-oauth-button" class="vk-oauth-button" type="button">Подключить VK</button>
                 <span id="vk-oauth-status" role="status">Проверяю подключение VK...</span>
             </div>
         </div>
-        <div id="source-loading" class="status-msg" style="display:none;">Ищу источники...</div>
-        <div id="source-error" class="status-msg error-msg" role="alert" style="display:none;"></div>
+        <div id="source-loading" class="status-msg" role="status" hidden>Ищу источники...</div>
+        <div id="source-error" class="status-msg error-msg" role="alert" hidden></div>
 
-        <div id="source-inspection-zone" style="display: none; margin-top: 20px; width: 100%; flex-direction: column; align-items: center;">
+        <div id="source-inspection-zone" class="source-inspection-zone" hidden>
             <div class="source-meta">
                 <h3 id="inspect-source-name">Загрузка...</h3>
                 <span id="inspect-source-reason">Причина...</span>
             </div>
 
-            <!-- Сетка-плитка для динамического рендеринга 4 постов сообщества -->
+            <!-- Плитка с несколькими постами источника -->
             <div id="posts-grid" class="grid-container"></div>
 
-            <div class="controls" style="max-width: 200px; justify-content: center; gap: 20px;">
-                <button class="btn btn-action-reject" onclick="voteSource('reject')">💩</button>
-                <button class="btn btn-action-approve" onclick="voteSource('approve')">🗿</button>
+            <div class="controls controls-compact">
+                <button class="btn btn-action-reject" type="button" data-source-vote="reject" title="Отклонить источник" aria-label="Отклонить источник">💩</button>
+                <button class="btn btn-action-approve" type="button" data-source-vote="approve" title="Одобрить источник" aria-label="Одобрить источник">🗿</button>
             </div>
         </div>
     </div>
@@ -136,9 +135,9 @@
             <div class="field-hint">JPEG, PNG, GIF, WebP или BMP. Максимум 10 МБ.</div>
         </form>
 
-        <div id="test-error" class="status-msg error-msg" role="alert" style="display:none;"></div>
-        <div id="test-loading" class="status-msg" role="status" style="display:none;">ИИ анализирует изображение...</div>
-        <section id="test-result" class="test-result" aria-live="polite" style="display:none;">
+        <div id="test-error" class="status-msg error-msg" role="alert" hidden></div>
+        <div id="test-loading" class="status-msg" role="status" hidden>ИИ анализирует изображение...</div>
+        <section id="test-result" class="test-result" aria-live="polite" hidden>
             <div class="test-image-comparison">
                 <figure class="test-image-figure">
                     <figcaption>Оригинал</figcaption>
@@ -195,14 +194,5 @@
         <img id="image-viewer-image" alt="" draggable="false">
         <div id="image-viewer-hint" class="image-viewer-hint">Колесо — зум до 5×, перетаскивание — сдвиг, клик — закрыть</div>
     </div>
-
-    <!-- Подключение изолированной JS-логики интерфейса -->
-    <script src="js/core.js?v=20261018-03"></script>
-    <script src="js/image-viewer.js?v=20261018-03"></script>
-    <script src="js/memes.js?v=20261018-03"></script>
-    <script src="js/sources.js?v=20261018-03"></script>
-    <script src="js/database.js?v=20261018-03"></script>
-    <script src="js/test.js?v=20261018-03"></script>
-    <script src="js/main.js?v=20261018-03"></script>
 </body>
 </html>

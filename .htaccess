@@ -1,0 +1,28 @@
+# Meme Tinder: наружу открыты только интерфейс (index.html, js/, css/) и API (index.php).
+# Работает, если для каталога сайта в Apache включено AllowOverride All (или хотя бы FileInfo и AuthConfig).
+
+Options -Indexes
+
+# Данные, журналы, состояние парсера, блокировки, секреты и служебные файлы.
+<FilesMatch "(^\.|\.(json|log|lock|md|backup)$|^config\.local)">
+    Require all denied
+</FilesMatch>
+
+# Служебные PHP-файлы: всё, кроме index.php, подключается изнутри и не должно вызываться напрямую.
+<FilesMatch "\.php$">
+    Require all denied
+</FilesMatch>
+<Files "index.php">
+    Require all granted
+</Files>
+
+<IfModule mod_alias.c>
+    RedirectMatch 404 ^/(.*/)?(lib|handlers|parser|sources|\.git)(/|$)
+</IfModule>
+
+# Интерфейс меняется вместе с кодом: браузер каждый раз сверяет версию (ETag) и не держит старые JS/CSS.
+<IfModule mod_headers.c>
+    <FilesMatch "\.(js|css|html)$">
+        Header set Cache-Control "no-cache"
+    </FilesMatch>
+</IfModule>

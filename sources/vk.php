@@ -1,6 +1,10 @@
 <?php
 // ВКонтакте: токены VK ID (OAuth) и выборка постов через VK API.
 
+const VK_ID_AUTHORIZE_URL = 'https://id.vk.ru/authorize';
+const VK_ID_TOKEN_URL = 'https://id.vk.ru/oauth2/auth';
+const VK_API_DEFAULT_VERSION = '5.199';
+
 function vk_oauth_config() {
     return [
         'client_id' => trim((string)getenv('VK_CLIENT_ID')),
@@ -70,7 +74,7 @@ function vk_access_token() {
         'state' => $state
     ];
     if ($config['service_token'] !== '') $parameters['service_token'] = $config['service_token'];
-    $updated = vk_oauth_post('https://id.vk.ru/oauth2/auth', $parameters);
+    $updated = vk_oauth_post(VK_ID_TOKEN_URL, $parameters);
     if (empty($updated['access_token']) || empty($updated['refresh_token'])) return '';
     if (!empty($updated['state']) && !hash_equals($state, (string)$updated['state'])) {
         throw new RuntimeException('VK вернул неожиданный state при обновлении токена.');
@@ -80,11 +84,26 @@ function vk_access_token() {
     return (string)$tokens['access_token'];
 }
 
+/** Есть ли рабочий токен VK. Ошибка обновления токена логируется и считается отсутствием подключения. */
+function vk_is_connected() {
+    try {
+        return vk_access_token() !== '';
+    } catch (Throwable $error) {
+        error_log('VK token refresh failed: ' . $error->getMessage());
+        return false;
+    }
+}
+
+function vk_oauth_is_configured() {
+    $config = vk_oauth_config();
+    return $config['client_id'] !== '' && $config['redirect_uri'] !== '';
+}
+
 function vk_api_request($method, $parameters) {
     $access_token = vk_access_token();
     if ($access_token === '') return [];
     $parameters['access_token'] = $access_token;
-    $parameters['v'] = trim((string)getenv('VK_API_VERSION')) ?: '5.199';
+    $parameters['v'] = trim((string)getenv('VK_API_VERSION')) ?: VK_API_DEFAULT_VERSION;
     $response = http_post('https://api.vk.com/method/' . rawurlencode($method), http_build_query($parameters));
     $status = $response['status'];
     $result = $response['body'] === false ? null : json_decode($response['body'], true);
@@ -97,6 +116,19 @@ function vk_api_request($method, $parameters) {
     return is_array($result['response'] ?? null) ? $result['response'] : [];
 }
 
+function vk_largest_photo_url(array $sizes) {
+    $best_url = '';
+    $best_area = -1;
+    foreach ($sizes as $size) {
+        $area = (int)($size['width'] ?? 0) * (int)($size['height'] ?? 0);
+        if ($area > $best_area && is_string($size['url'] ?? null)) {
+            $best_area = $area;
+            $best_url = $size['url'];
+        }
+    }
+    return $best_url;
+}
+
 function build_vk_preview_posts($source, $count = 4) {
     $domain = trim((string)($source['id'] ?? ''));
     if (!is_valid_vk_domain($domain)) return [];
@@ -106,11 +138,7 @@ function build_vk_preview_posts($source, $count = 4) {
         $images = [];
         foreach (($post['attachments'] ?? []) as $attachment) {
             if (($attachment['type'] ?? '') !== 'photo') continue;
-            $sizes = $attachment['photo']['sizes'] ?? [];
-            usort($sizes, function($first, $second) {
-                return ((int)($second['width'] ?? 0) * (int)($second['height'] ?? 0)) <=> ((int)($first['width'] ?? 0) * (int)($first['height'] ?? 0));
-            });
-            $url = $sizes[0]['url'] ?? '';
+            $url = vk_largest_photo_url($attachment['photo']['sizes'] ?? []);
             if (is_string($url) && str_starts_with($url, 'https://')) $images[] = $url;
         }
         if (!$images) continue;
@@ -120,8 +148,8 @@ function build_vk_preview_posts($source, $count = 4) {
         $posts[] = [
             'image' => $images[0],
             'images' => array_values(array_unique($images)),
-            'text' => $text ?: 'Пост без текста',
-            'source' => $source['name'] ?? ('ВКонтакте | ' . $domain),
+            'text' => $text ?: EMPTY_POST_TEXT,
+            'source' => $source['name'] ?? source_display_name(PLATFORM_VK, $domain),
             'post_id' => $post_id,
             'url' => $owner_id !== '' && $post_id !== '' ? 'https://vk.com/wall' . $owner_id . '_' . $post_id : 'https://vk.com/' . rawurlencode($domain)
         ];

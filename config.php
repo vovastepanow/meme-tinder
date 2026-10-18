@@ -26,7 +26,6 @@ const SOURCES_FILE = __DIR__ . '/sources_db.json';
 const PARSER_SCRIPT = __DIR__ . '/cron_parser.php';
 
 const OLLAMA_GENERATE_URL = 'http://localhost:11434/api/generate';
-const TEXT_MODEL = 'qwen3.5-vision:latest';
 const VISION_MODEL = 'qwen3.5-vision:latest';
 
 // Модели, у которых включаем отдельный вывод размышлений (поле "thinking" в ответе Ollama).
@@ -38,6 +37,7 @@ const MEME_POOL_TARGET = 40;        // пул перестаёт пополня�
 const MEME_ADDED_PER_RUN = 30;      // максимум новых мемов за один запуск
 const MEME_ANALYZE_PER_RUN = 80;    // максимум кандидатов, которые уйдут в модель за один запуск
 const PARSER_MAX_SECONDS = 2400;    // жёсткий лимит времени одного запуска (40 минут)
+const PARSER_COOLDOWN_SECONDS = 600; // автозапуск парсера не чаще одного раза за этот срок
 
 // Источники: сколько постов брать с каждой площадки.
 const DVACH_THREADS_PER_BOARD = 8;

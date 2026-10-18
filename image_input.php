@@ -1,4 +1,5 @@
 <?php
+// Изображения от пользователя: проверка байтов, безопасная загрузка по ссылке (без доступа к внутренней сети).
 
 function validate_image_bytes($image_data) {
     if (!is_string($image_data) || strlen($image_data) > MAX_IMAGE_BYTES) {
@@ -80,11 +81,11 @@ function fetch_public_image($url) {
 function read_request_image($json_input, $upload_error_message, $missing_url_message) {
     if (isset($_FILES['image_file']) && $_FILES['image_file']['error'] !== UPLOAD_ERR_NO_FILE) {
         $file = $_FILES['image_file'];
-        if ($file['error'] !== UPLOAD_ERR_OK) throw new RuntimeException($upload_error_message);
+        if ($file['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($file['tmp_name'])) throw new RuntimeException($upload_error_message);
         if ($file['size'] > MAX_IMAGE_BYTES) throw new RuntimeException('Изображение должно быть не больше 10 МБ.');
         return file_get_contents($file['tmp_name']);
     }
-    $image_url = trim($_POST['image_url'] ?? ($json_input['image_url'] ?? ''));
+    $image_url = trim((string)($_POST['image_url'] ?? ($json_input['image_url'] ?? '')));
     if ($image_url === '') throw new RuntimeException($missing_url_message);
     return fetch_public_image($image_url);
 }

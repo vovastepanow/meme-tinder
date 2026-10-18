@@ -1,4 +1,4 @@
-/* overlays.css */
+/* overlays.css — полноэкранный просмотр картинок и диалог редактора баз. */
 .image-viewer {
     position: fixed;
     inset: 0;
@@ -12,7 +12,6 @@
     touch-action: none;
     user-select: none;
 }
-.image-viewer[hidden] { display: none; }
 .image-viewer.is-dragging { cursor: grabbing; }
 .image-viewer img {
     display: block;

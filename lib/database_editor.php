@@ -1,6 +1,5 @@
 <?php
 // Редактор баз данных: чтение, проверка и сохранение записей JSON-файлов.
-// ---- Database editor ----
 
 function database_editor_definitions() {
     return [
@@ -32,19 +31,26 @@ function database_editor_definitions() {
     ];
 }
 
-function database_editor_load($database) {
+function database_editor_definition($database) {
     $definitions = database_editor_definitions();
-    if (!isset($definitions[$database])) throw new InvalidArgumentException('Неизвестная база данных.');
-    $raw = file_get_contents($definitions[$database]['file']);
+    if (!is_string($database) || !isset($definitions[$database])) throw new InvalidArgumentException('Неизвестная база данных.');
+    return $definitions[$database];
+}
+
+/** Загружает файл базы. В отличие от load_data, битый JSON — ошибка, а не пустая база: иначе сохранение затрёт файл. */
+function database_editor_load($database) {
+    $definition = database_editor_definition($database);
+    $raw = is_file($definition['file']) ? file_get_contents($definition['file']) : false;
+    if ($raw === false) throw new RuntimeException('Файл базы не найден или недоступен для чтения.');
     $data = json_decode($raw, true);
     if (json_last_error() !== JSON_ERROR_NONE || !is_array($data)) {
         throw new RuntimeException('Файл базы содержит некорректный JSON.');
     }
-    return [$definitions[$database], $data];
+    return [$definition, $data];
 }
 
 function database_editor_collection($database, $definition, $data, $collection) {
-    if (!array_key_exists($collection, $definition['collections'])) {
+    if (!is_string($collection) || !array_key_exists($collection, $definition['collections'])) {
         throw new InvalidArgumentException('Неизвестная коллекция.');
     }
     $items = $database === 'memes_pool' ? $data : ($data[$collection] ?? []);
@@ -99,6 +105,7 @@ function database_editor_validate_record($database, $collection, $record) {
         }
     }
 }
+
 function database_editor_require_record($input) {
     if (!array_key_exists('record', $input)) throw new InvalidArgumentException('Не переданы данные записи.');
     return $input['record'];
