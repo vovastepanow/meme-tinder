@@ -1,0 +1,76 @@
+<?php
+// Каталог источников, стартовые файлы данных и загрузка истории.
+function create_default_source_catalog() {
+    return [
+        '2ch_boards' => ['b', 'me', 'pr', 'r', 'cc', 'a', 'mu', 'd', 's', 'b2'],
+        'vk_publics' => [
+            ['id' => 'mrzlk', 'name' => 'MDK'],
+            ['id' => 'leprum', 'name' => 'Лепрекон'],
+            ['id' => 'sci_one', 'name' => 'Умный Юмор'],
+            ['id' => 'british_humor', 'name' => 'БРИТИШ ЮМОР'],
+            ['id' => 'bessm_humor', 'name' => 'ОВСЯНКА, СЭР!'],
+            ['id' => 'memes_2024', 'name' => 'Мемы на каждый день']
+        ],
+        'telegram_channels' => [
+            ['id' => 'memesdaily', 'name' => 'Мемы каждый день'],
+            ['id' => 'this_is_not_funny', 'name' => 'Это не смешно'],
+            ['id' => 'humorhub', 'name' => 'Humor Hub'],
+            ['id' => 'trashmemes', 'name' => 'Trash memes'],
+            ['id' => 'russmemes', 'name' => 'Русские мемы'],
+            ['id' => 'memechi', 'name' => 'Meme Chi']
+        ],
+        'source_votes' => []
+    ];
+}
+
+function ensure_default_project_data() {
+    if (!is_file(HISTORY_FILE)) {
+        save_data(HISTORY_FILE, empty_history());
+    }
+
+    if (!is_file(SOURCES_FILE)) {
+        save_data(SOURCES_FILE, create_default_source_catalog());
+    } else {
+        $source_db = load_data(SOURCES_FILE, create_default_source_catalog());
+        $normalized = normalize_source_db($source_db);
+        if ($source_db !== $normalized) {
+            save_data(SOURCES_FILE, $normalized);
+        }
+    }
+
+    if (!is_file(POOL_FILE)) {
+        save_data(POOL_FILE, create_demo_pool());
+    }
+}
+
+function normalize_source_db($db) {
+    $defaults = create_default_source_catalog();
+    $normalized = $defaults;
+
+    foreach (['2ch_boards', 'vk_publics', 'telegram_channels'] as $key) {
+        $normalized[$key] = is_array($db[$key] ?? null) ? array_values($db[$key]) : $defaults[$key];
+    }
+
+    $votes = is_array($db['source_votes'] ?? null) ? $db['source_votes'] : [];
+    $normalized['source_votes'] = array_values(array_filter($votes, function($vote) {
+        return is_array($vote) && !empty($vote['source_id'] ?? '');
+    }));
+
+    return $normalized;
+}
+
+function source_vote_exists($db, $source_id) {
+    foreach (($db['source_votes'] ?? []) as $vote) {
+        if (($vote['source_id'] ?? null) === $source_id) {
+            return true;
+        }
+    }
+    return false;
+}
+function load_history() {
+    return load_data(HISTORY_FILE, empty_history());
+}
+
+function load_source_db() {
+    return normalize_source_db(load_data(SOURCES_FILE, create_default_source_catalog()));
+}
