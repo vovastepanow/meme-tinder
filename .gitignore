@@ -1,0 +1,4 @@
+# Runtime state of the background parser and VK tokens: never commit.
+.meme-tinder-*
+*.lock
+*.log

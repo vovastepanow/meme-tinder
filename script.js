@@ -10,91 +10,170 @@ let memePollTimer = null;
 let memeActivityLines = [];
 let parserActivityLines = [];
 let consoleFollowsTail = true;
-const memeVisionPreviewCache = new Map();
 const DEBUG_MODE = new URLSearchParams(window.location.search).get('debug') === '1';
-let imageViewerScale = 1;
-let imageViewerDrag = null;
+const IMAGE_VIEWER_MAX_ZOOM = 5;
+const IMAGE_VIEWER_CLICK_TOLERANCE = 4;
+const IMAGE_VIEWER_MIN_FILL = 0.7;
+const IMAGE_VIEWER_VISIBLE_EDGE = 60;
+const imageViewerState = { zoom: 1, x: 0, y: 0, drag: null };
 
-function resizeImageViewer(factor = 1) {
-    const viewer = document.getElementById('image-viewer');
+function applyImageViewerTransform() {
+    const image = document.getElementById('image-viewer-image');
+    const { zoom, x, y } = imageViewerState;
+    image.style.transform = `translate(${x}px, ${y}px) scale(${zoom})`;
+    image.classList.toggle('is-zoomed', zoom > 1);
+}
+
+/** Small images are upscaled to fill at least IMAGE_VIEWER_MIN_FILL of the screen; large ones shrink to fit. */
+function fitImageViewer() {
     const image = document.getElementById('image-viewer-image');
     if (!image.naturalWidth || !image.naturalHeight) return;
+    const fit = Math.min((window.innerWidth - 48) / image.naturalWidth, (window.innerHeight - 72) / image.naturalHeight);
+    const scale = Math.min(fit, Math.max(1, fit * IMAGE_VIEWER_MIN_FILL));
+    image.style.width = `${Math.round(image.naturalWidth * scale)}px`;
+    image.style.height = `${Math.round(image.naturalHeight * scale)}px`;
+}
 
-    const maxWidth = Math.max(180, window.innerWidth - 32);
-    const maxHeight = Math.max(160, window.innerHeight - 96);
-    const maxScale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
-    const minScale = Math.min(maxScale, 0.15);
-    imageViewerScale = Math.max(minScale, Math.min(maxScale, imageViewerScale * factor));
+/** Lets the image move freely but keeps at least IMAGE_VIEWER_VISIBLE_EDGE pixels of it on screen. */
+function clampImageViewerOffset() {
+    const image = document.getElementById('image-viewer-image');
+    const maxX = Math.max(0, (window.innerWidth + image.offsetWidth * imageViewerState.zoom) / 2 - IMAGE_VIEWER_VISIBLE_EDGE);
+    const maxY = Math.max(0, (window.innerHeight + image.offsetHeight * imageViewerState.zoom) / 2 - IMAGE_VIEWER_VISIBLE_EDGE);
+    imageViewerState.x = Math.max(-maxX, Math.min(maxX, imageViewerState.x));
+    imageViewerState.y = Math.max(-maxY, Math.min(maxY, imageViewerState.y));
+}
 
-    const width = Math.round(image.naturalWidth * imageViewerScale);
-    const height = Math.round(image.naturalHeight * imageViewerScale);
-    const previous = viewer.getBoundingClientRect();
-    viewer.style.width = `${width + 16}px`;
-    image.style.width = `${width}px`;
-    image.style.height = `${height}px`;
-
-    const left = previous.width ? previous.left + (previous.width - width - 16) / 2 : (window.innerWidth - width - 16) / 2;
-    const top = previous.height ? previous.top + (previous.height - height - 42) / 2 : (window.innerHeight - height - 42) / 2;
-    viewer.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 24, left))}px`;
-    viewer.style.top = `${Math.max(8, Math.min(window.innerHeight - height - 50, top))}px`;
+function zoomImageViewer(factor, clientX, clientY) {
+    const previousZoom = imageViewerState.zoom;
+    const zoom = Math.max(1, Math.min(IMAGE_VIEWER_MAX_ZOOM, previousZoom * factor));
+    if (zoom === previousZoom) return;
+    // Zoom around the cursor: the point under the pointer stays in place.
+    const pointX = clientX - window.innerWidth / 2;
+    const pointY = clientY - window.innerHeight / 2;
+    const ratio = zoom / previousZoom;
+    imageViewerState.x = pointX - (pointX - imageViewerState.x) * ratio;
+    imageViewerState.y = pointY - (pointY - imageViewerState.y) * ratio;
+    imageViewerState.zoom = zoom;
+    clampImageViewerOffset();
+    applyImageViewerTransform();
 }
 
 function openImageViewer(source, altText) {
     const viewer = document.getElementById('image-viewer');
     const image = document.getElementById('image-viewer-image');
-    document.getElementById('image-viewer-title').textContent = altText || 'Просмотр изображения';
-    imageViewerScale = 1;
-    image.onload = () => resizeImageViewer();
+    Object.assign(imageViewerState, { zoom: 1, x: 0, y: 0, drag: null });
+    image.alt = altText || 'Просмотр изображения';
+    image.style.width = '';
+    image.style.height = '';
+    image.onload = fitImageViewer;
     image.src = source;
+    if (image.complete) fitImageViewer();
+    applyImageViewerTransform();
     viewer.hidden = false;
-    if (image.complete) resizeImageViewer();
+    document.body.classList.add('image-viewer-open');
 }
 
 function closeImageViewer() {
-    document.getElementById('image-viewer').hidden = true;
+    const viewer = document.getElementById('image-viewer');
+    viewer.hidden = true;
+    viewer.classList.remove('is-dragging');
     document.getElementById('image-viewer-image').removeAttribute('src');
+    document.body.classList.remove('image-viewer-open');
+    imageViewerState.drag = null;
 }
 
 function initializeImageViewer() {
     const viewer = document.getElementById('image-viewer');
-    const header = document.getElementById('image-viewer-header');
     const image = document.getElementById('image-viewer-image');
 
     document.addEventListener('click', event => {
         const target = event.target.closest('img');
         if (!target || target === image || (!target.currentSrc && !target.src)) return;
+        event.preventDefault();
         openImageViewer(target.currentSrc || target.src, target.alt);
     });
-    document.getElementById('image-viewer-close').addEventListener('click', closeImageViewer);
+    document.getElementById('image-viewer-close').addEventListener('click', event => {
+        event.stopPropagation();
+        closeImageViewer();
+    });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && !viewer.hidden) closeImageViewer();
     });
+    window.addEventListener('resize', () => {
+        if (!viewer.hidden) fitImageViewer();
+    });
     viewer.addEventListener('wheel', event => {
         event.preventDefault();
-        resizeImageViewer(event.deltaY < 0 ? 1.12 : 0.89);
+        zoomImageViewer(event.deltaY < 0 ? 1.2 : 1 / 1.2, event.clientX, event.clientY);
     }, { passive: false });
 
-    header.addEventListener('pointerdown', event => {
-        if (event.target.closest('button')) return;
-        const bounds = viewer.getBoundingClientRect();
-        imageViewerDrag = { pointerId: event.pointerId, offsetX: event.clientX - bounds.left, offsetY: event.clientY - bounds.top };
-        header.setPointerCapture(event.pointerId);
+    viewer.addEventListener('pointerdown', event => {
+        if (event.button !== 0 || event.target.closest('button')) return;
+        imageViewerState.drag = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            originX: imageViewerState.x,
+            originY: imageViewerState.y,
+            moved: false
+        };
+        viewer.setPointerCapture(event.pointerId);
     });
-    header.addEventListener('pointermove', event => {
-        if (!imageViewerDrag || imageViewerDrag.pointerId !== event.pointerId) return;
-        viewer.style.left = `${Math.max(0, Math.min(window.innerWidth - viewer.offsetWidth, event.clientX - imageViewerDrag.offsetX))}px`;
-        viewer.style.top = `${Math.max(0, Math.min(window.innerHeight - 36, event.clientY - imageViewerDrag.offsetY))}px`;
+    viewer.addEventListener('pointermove', event => {
+        const drag = imageViewerState.drag;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        const dx = event.clientX - drag.startX;
+        const dy = event.clientY - drag.startY;
+        if (!drag.moved && Math.hypot(dx, dy) < IMAGE_VIEWER_CLICK_TOLERANCE) return;
+        drag.moved = true;
+        viewer.classList.add('is-dragging');
+        imageViewerState.x = drag.originX + dx;
+        imageViewerState.y = drag.originY + dy;
+        clampImageViewerOffset();
+        applyImageViewerTransform();
     });
-    const stopDragging = () => { imageViewerDrag = null; };
-    header.addEventListener('pointerup', stopDragging);
-    header.addEventListener('pointercancel', stopDragging);
+    viewer.addEventListener('pointerup', event => {
+        const drag = imageViewerState.drag;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        imageViewerState.drag = null;
+        viewer.classList.remove('is-dragging');
+        if (!drag.moved) closeImageViewer();
+    });
+    viewer.addEventListener('pointercancel', () => {
+        imageViewerState.drag = null;
+        viewer.classList.remove('is-dragging');
+    });
+}
+
+function initializeComplaintMenu() {
+    const button = document.getElementById('complaint-button');
+    const menu = document.getElementById('complaint-menu');
+    const setOpen = open => {
+        menu.hidden = !open;
+        button.setAttribute('aria-expanded', String(open));
+    };
+    button.addEventListener('click', event => {
+        event.stopPropagation();
+        setOpen(menu.hidden);
+    });
+    menu.addEventListener('click', event => {
+        const item = event.target.closest('[data-reason]');
+        if (!item) return;
+        setOpen(false);
+        voteMeme('wrong', { reason: item.dataset.reason });
+    });
+    document.addEventListener('click', event => {
+        if (!menu.hidden && !event.target.closest('.complaint-wrap')) setOpen(false);
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') setOpen(false);
+    });
 }
 
 function apiUrl(action) {
     const activityLabels = {
         refresh_memes: 'Запущен поиск мемов',
         analyze_image: 'Запущен анализ изображения',
-        prepare_vision_preview: 'Подготовка изображения для анализа',
         suggest_sources: 'Поиск нового источника',
         meme_vote: 'Сохранение оценки мема',
         source_vote: 'Сохранение решения по источнику',
@@ -113,13 +192,37 @@ function resetMemeActivity() {
     parserActivityLines = [];
 }
 
+// Строки вида "[ИИ → model] текст", "[ИИ ← model] текст" и "[ИИ мысли model] текст" (см. record_ai_exchange в http_client.php).
+const AI_LOG_LINE_PATTERN = /^\[ИИ (→|←|мысли) ([^\]]+)\] ?([\s\S]*)$/;
+const AI_LABELS = { '→': 'запрос →', '←': 'ответ ←', 'мысли': 'размышления' };
+const AI_CLASSES = { '→': 'ai-request', '←': 'ai-response', 'мысли': 'ai-thinking' };
+
+/** Lines from record_ai_exchange() become chat-style bubbles: prompt, reply and reasoning, collapsed to 4 lines. */
+function renderAiConsoleEntry(entry, timestamp, direction, model, text) {
+    entry.classList.add('ai-message', AI_CLASSES[direction] || 'ai-response');
+    entry.title = 'Клик — развернуть или свернуть';
+    const meta = document.createElement('span');
+    meta.className = 'ai-message-meta';
+    meta.textContent = `${timestamp} · ${AI_LABELS[direction] || direction} ${model}`;
+    const body = document.createElement('span');
+    body.className = 'ai-message-text';
+    body.textContent = text;
+    entry.append(meta, body);
+    entry.addEventListener('click', () => entry.classList.toggle('is-expanded'));
+}
+
 function appendConsoleLine(message) {
     const track = document.getElementById('meme-activity-track');
     const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const entry = document.createElement('p');
     entry.className = 'activity-console-line';
-    entry.textContent = `${timestamp} ${message}`;
-    memeActivityLines.push(entry.textContent);
+    const aiExchange = AI_LOG_LINE_PATTERN.exec(message);
+    if (aiExchange) {
+        renderAiConsoleEntry(entry, timestamp, ...aiExchange.slice(1));
+    } else {
+        entry.textContent = `${timestamp} ${message}`;
+    }
+    memeActivityLines.push(`${timestamp} ${message}`);
     track.appendChild(entry);
 
     while (memeActivityLines.length > 200) {
@@ -133,11 +236,8 @@ function appendAppLog(message) {
     appendConsoleLine(message);
 }
 
-function logOcrDiagnostics(source, diagnostics = {}) {
-    const boxes = (diagnostics.regions || []).map(region => `${region.left},${region.top} ${region.width}x${region.height}`);
-    const rejected = (diagnostics.rejected || []).map(token => `${token.text}:${token.confidence}/${token.reason}`);
-    appendAppLog(`OCR ${source}: ${diagnostics.status || 'unknown'}, image ${diagnostics.image_width ?? '?'}x${diagnostics.image_height ?? '?'}, PSM ${diagnostics.psm ?? '-'}, scale ${diagnostics.scale ?? '-'}, raw ${diagnostics.raw_word_count ?? 0}, accepted ${diagnostics.word_count ?? 0}/${diagnostics.line_count ?? 0} lines, confidence ${diagnostics.confidence ?? 0}, text="${diagnostics.text || ''}", boxes=${boxes.join(';') || '-'}`);
-    if (rejected.length) appendAppLog(`OCR rejected ${source}: ${rejected.join(';')}`);
+function logAiExchanges(lines) {
+    (Array.isArray(lines) ? lines : []).forEach(line => appendAppLog(line));
 }
 
 function appendMemeActivity(activity) {
@@ -216,6 +316,15 @@ async function searchForMemes() {
 function normalizeMemeSlides(meme) {
     if (!meme) return [];
 
+    // Видео-мем показываем одним слайдом: постер (картинка) и файл видео.
+    if (meme.video) {
+        return [{
+            image: meme.image || meme.images?.[0] || '',
+            video: meme.video,
+            text: meme.text || meme.ai_description || 'Текст к посту отсутствует'
+        }];
+    }
+
     if (Array.isArray(meme.slides) && meme.slides.length) {
         return meme.slides.map((slide, index) => ({
             image: slide.image || meme.images?.[index] || meme.image || '',
@@ -242,20 +351,30 @@ function renderMemeSlide() {
     const slides = currentMemeSlides.length ? currentMemeSlides : [{ image: '', text: 'Нет изображения' }];
     const active = slides[currentSlideIndex] || slides[0];
     const img = document.getElementById('meme-image');
+    const video = document.getElementById('meme-video');
     const caption = document.getElementById('meme-slide-caption');
     const position = document.getElementById('meme-slide-position');
     const prevBtn = document.getElementById('carousel-prev');
     const nextBtn = document.getElementById('carousel-next');
 
-    if (active && active.image) {
-        img.src = active.image;
-        img.style.display = 'block';
-        loadMemeVisionPreview(active.image);
-    } else {
+    if (active && active.video) {
+        video.poster = active.image || '';
+        if (video.getAttribute('src') !== active.video) video.src = active.video;
+        video.style.display = 'block';
         img.removeAttribute('src');
         img.style.display = 'none';
-        document.getElementById('meme-vision-image').removeAttribute('src');
-        document.getElementById('meme-vision-status').textContent = 'Нет изображения';
+    } else {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.style.display = 'none';
+        if (active && active.image) {
+            img.src = active.image;
+            img.style.display = 'block';
+        } else {
+            img.removeAttribute('src');
+            img.style.display = 'none';
+        }
     }
 
     caption.textContent = active?.text || currentMeme?.text || 'Текст к посту отсутствует';
@@ -273,62 +392,6 @@ function renderMemeSlide() {
     position.textContent = hasMultiple ? `${currentSlideIndex + 1} / ${slides.length}` : '';
 }
 
-async function loadMemeVisionPreview(imageUrl) {
-    const preview = document.getElementById('meme-vision-image');
-    const status = document.getElementById('meme-vision-status');
-    preview.removeAttribute('src');
-    status.textContent = 'Ищу текст и закрываю его...';
-    try {
-        let request = memeVisionPreviewCache.get(imageUrl);
-        if (!request) {
-            request = (async () => {
-                const body = new FormData();
-                if (imageUrl.startsWith('data:image/')) {
-                    let imageBlob = await (await fetch(imageUrl)).blob();
-                    if (imageBlob.type === 'image/svg+xml') {
-                        const objectUrl = URL.createObjectURL(imageBlob);
-                        try {
-                            const image = new Image();
-                            await new Promise((resolve, reject) => {
-                                image.onload = resolve;
-                                image.onerror = reject;
-                                image.src = objectUrl;
-                            });
-                            const canvas = document.createElement('canvas');
-                            canvas.width = image.naturalWidth;
-                            canvas.height = image.naturalHeight;
-                            canvas.getContext('2d').drawImage(image, 0, 0);
-                            imageBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                        } finally {
-                            URL.revokeObjectURL(objectUrl);
-                        }
-                    }
-                    body.append('image_file', imageBlob, 'meme-preview.png');
-                } else {
-                    body.append('image_url', imageUrl);
-                }
-                const response = await fetch(apiUrl('prepare_vision_preview'), { method: 'POST', body });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
-                return data;
-            })();
-            memeVisionPreviewCache.set(imageUrl, request);
-        }
-        const data = await request;
-        if (currentMemeSlides[currentSlideIndex]?.image !== imageUrl) return;
-        if (data.ocr_diagnostics) logOcrDiagnostics('meme-preview', data.ocr_diagnostics);
-        preview.src = data.vision_preview;
-        status.textContent = data.ocr_regions_count
-            ? `Закрыто областей текста: ${data.ocr_regions_count}`
-            : 'Tesseract не нашёл текстовых областей';
-    } catch (error) {
-        memeVisionPreviewCache.delete(imageUrl);
-        if (currentMemeSlides[currentSlideIndex]?.image === imageUrl) {
-            status.textContent = `Не удалось подготовить копию: ${error.message}`;
-        }
-    }
-}
-
 function changeMemeSlide(delta) {
     if (!currentMemeSlides.length) return;
     currentSlideIndex = (currentSlideIndex + delta + currentMemeSlides.length) % currentMemeSlides.length;
@@ -340,7 +403,7 @@ function switchTab(tabId, element) {
     appendAppLog(`Открыта вкладка: ${element.textContent.trim()}`);
     document.querySelectorAll('.view-panel').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.tabs .tab-btn').forEach(b => b.classList.remove('active'));
-    
+
     document.getElementById(tabId).classList.add('active');
     element.classList.add('active');
     if (tabId === 'database-tab') loadDatabaseOptions();
@@ -490,7 +553,7 @@ function safeSourcePostUrl(record) {
     if (!record || typeof record !== 'object' || typeof record.source_url !== 'string') return '';
     try {
         const url = new URL(record.source_url);
-        return url.protocol === 'https:' && url.hostname === '2ch.hk' ? url.href : '';
+        return url.protocol === 'https:' && ['2ch.hk', 't.me', 'vk.com'].includes(url.hostname) ? url.href : '';
     } catch (error) {
         return '';
     }
@@ -674,8 +737,8 @@ async function analyzeTestImage(event) {
 
         const response = await fetch(apiUrl('analyze_image'), { method: 'POST', body });
         const data = await response.json();
+        logAiExchanges(data.ai_log);
         if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
-        if (data.ocr_diagnostics) logOcrDiagnostics('image-analysis', data.ocr_diagnostics);
 
         if (!file) {
             const preview = document.getElementById('test-image');
@@ -688,15 +751,6 @@ async function analyzeTestImage(event) {
         document.getElementById('test-description').innerHTML = `<strong>ИИ описание:</strong> ${escapeHtml(data.description || 'Описание не получено')}`;
         document.getElementById('test-why-funny').textContent = data.why_funny ? `Почему смешно: ${data.why_funny}` : '';
         document.getElementById('test-is-funny').textContent = `Смешно? ${data.is_funny ? 'Да' : 'Нет'}`;
-        const visionFigure = document.getElementById('test-vision-figure');
-        if (data.vision_preview) {
-            document.getElementById('test-vision-image').src = data.vision_preview;
-            visionFigure.style.display = 'block';
-        } else {
-            visionFigure.style.display = 'none';
-        }
-        const ocr = document.getElementById('test-ocr');
-        ocr.textContent = data.ocr ? `Текст на изображении: ${data.ocr}` : 'Текст на изображении не распознан';
         document.getElementById('test-result').style.display = 'block';
     } catch (e) {
         error.textContent = `Не удалось оценить изображение: ${e.message}`;
@@ -742,7 +796,7 @@ async function loadCurrentMeme() {
         }
 
         currentMeme = data;
-        appendAppLog(`Показан мем: ${data.source || 'источник не указан'}, рейтинг ${Number(data.rating || 0)}%.`);
+        appendAppLog(`Показан ${data.video ? 'видео-мем' : 'мем'}: ${data.source || 'источник не указан'}, рейтинг ${Number(data.rating || 0)}%.`);
         currentMemeSlides = normalizeMemeSlides(data);
         currentSlideIndex = 0;
         if (currentMemeSlides.length) {
@@ -786,14 +840,14 @@ async function loadCurrentMeme() {
     }
 }
 
-async function voteMeme(voteType) {
+async function voteMeme(voteType, details = {}) {
     if (!currentMeme) return;
     document.getElementById('meme-tab').style.opacity = '0.3';
     try {
         const response = await fetch(apiUrl('meme_vote'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ vote: voteType, meme: currentMeme })
+            body: JSON.stringify({ vote: voteType, meme: currentMeme, ...details })
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         await loadCurrentMeme();
@@ -885,6 +939,7 @@ async function resetDebugDemo() {
 // Автоматический запуск первой загрузки контента при открытии страницы
 document.addEventListener('DOMContentLoaded', () => {
     initializeImageViewer();
+    initializeComplaintMenu();
     initializeActivityConsole();
     appendAppLog('Приложение запущено. Загружаю пул мемов.');
     if (DEBUG_MODE) document.getElementById('debug-banner').style.display = 'flex';
@@ -901,7 +956,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     document.getElementById('analyze-form').addEventListener('submit', analyzeTestImage);
-        document.getElementById('meme-search-button').addEventListener('click', searchForMemes);
+    document.getElementById('meme-search-button').addEventListener('click', searchForMemes);
     document.getElementById('database-select').addEventListener('change', loadDatabaseCollections);
     document.getElementById('database-collection-select').addEventListener('change', loadDatabaseRecords);
     document.getElementById('database-refresh').addEventListener('click', loadDatabaseRecords);

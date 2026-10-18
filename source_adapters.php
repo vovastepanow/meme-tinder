@@ -1,5 +1,96 @@
 <?php
 
+function clean_html_text($raw) {
+    $text = html_entity_decode(strip_tags((string)$raw), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    return trim(preg_replace('/\s+/u', ' ', $text) ?? '');
+}
+
+function is_valid_dvach_board($board) {
+    return preg_match('/^[a-z0-9_-]{1,30}$/i', (string)$board) === 1;
+}
+
+function is_valid_dvach_id($id) {
+    return preg_match('/^[0-9]{1,20}$/', (string)$id) === 1;
+}
+
+function is_valid_telegram_channel($channel) {
+    return preg_match('/^[A-Za-z][A-Za-z0-9_]{4,31}$/', (string)$channel) === 1;
+}
+
+function is_valid_vk_domain($domain) {
+    return preg_match('/^[A-Za-z0-9_.-]{1,64}$/', (string)$domain) === 1;
+}
+
+function dvach_post_url($board, $thread_id, $post_id) {
+    return 'https://2ch.hk/' . rawurlencode($board) . '/res/' . rawurlencode($thread_id) . '.html#' . rawurlencode($post_id);
+}
+
+const DVACH_PREVIEW_HTTP_OPTIONS = [
+    CURLOPT_CONNECTTIMEOUT => 3,
+    CURLOPT_TIMEOUT => 8,
+    CURLOPT_MAXREDIRS => 2,
+    CURLOPT_PROTOCOLS => CURLPROTO_HTTPS
+];
+
+/** Catalog JSON when $thread_id is null, otherwise the thread JSON. */
+function fetch_2ch_json($board, $thread_id = null, array $http_options = DVACH_PREVIEW_HTTP_OPTIONS) {
+    if (!is_valid_dvach_board($board)) return [];
+    if ($thread_id !== null && !is_valid_dvach_id($thread_id)) return [];
+    $url = $thread_id === null
+        ? 'https://2ch.hk/' . rawurlencode($board) . '/catalog.json'
+        : 'https://2ch.hk/' . rawurlencode($board) . '/res/' . rawurlencode($thread_id) . '.json';
+    return http_get_json($url, $http_options);
+}
+
+function dvach_thread_posts($thread_data) {
+    $thread = $thread_data['threads'][0] ?? null;
+    if (!is_array($thread) || empty($thread['posts']) || !is_array($thread['posts'])) return [];
+    return $thread['posts'];
+}
+
+function dvach_post_images($board, $post, $limit = PHP_INT_MAX) {
+    $pattern = '#^/' . preg_quote($board, '#') . '/src/[0-9]+/[^/]+\.(?:jpe?g|png|gif|webp)$#i';
+    $images = [];
+    foreach (($post['files'] ?? []) as $file) {
+        $path = $file['path'] ?? '';
+        if (preg_match($pattern, $path)) $images[] = 'https://2ch.hk' . $path;
+        if (count($images) >= $limit) break;
+    }
+    return $images;
+}
+
+function dvach_post_text($post) {
+    return clean_html_text($post['comment'] ?? $post['subject'] ?? '');
+}
+
+function build_dvach_preview_posts($source, $count = 4) {
+    $board = $source['board'] ?? '';
+    $posts = [];
+    foreach (dvach_thread_posts(fetch_2ch_json($board, $source['thread_id'] ?? '')) as $post) {
+        if (count($posts) >= $count) break;
+        $images = dvach_post_images($board, $post, 4);
+        if (!$images) continue;
+        $text = dvach_post_text($post);
+        $posts[] = [
+            'image' => $images[0],
+            'images' => $images,
+            'text' => $text ?: 'Пост без текста',
+            'source' => $source['name'],
+            'post_id' => $post['num'] ?? ''
+        ];
+    }
+    return $posts;
+}
+
+function build_source_preview_posts($source, $count = 4) {
+    $platform = $source['platform'] ?? '';
+    if ($platform === 'Telegram') return build_telegram_preview_posts($source, $count);
+    if ($platform === 'ВКонтакте') return build_vk_preview_posts($source, $count);
+    if ($platform === 'Двач') return build_dvach_preview_posts($source, $count);
+    return [];
+}
+
+
 function vk_oauth_config() {
     return [
         'client_id' => trim((string)getenv('VK_CLIENT_ID')),
@@ -39,23 +130,16 @@ function save_vk_tokens($tokens) {
 }
 
 function vk_oauth_post($url, $parameters) {
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => http_build_query($parameters),
+    $response = http_post($url, http_build_query($parameters), [
         CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
         CURLOPT_CONNECTTIMEOUT => 8,
         CURLOPT_TIMEOUT => 20
     ]);
-    $response = curl_exec($ch);
-    $error = curl_error($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    $result = $response === false ? null : json_decode($response, true);
+    $status = $response['status'];
+    $result = $response['body'] === false ? null : json_decode($response['body'], true);
     if (!is_array($result) || $status < 200 || $status >= 300 || !empty($result['error'])) {
         $message = is_array($result) ? ($result['error_description'] ?? $result['error'] ?? '') : '';
-        throw new RuntimeException($message ?: ($error ?: 'Ошибка запроса к VK ID (HTTP ' . $status . ').'));
+        throw new RuntimeException($message ?: ($response['error'] ?: 'Ошибка запроса к VK ID (HTTP ' . $status . ').'));
     }
     return $result;
 }
@@ -91,21 +175,11 @@ function vk_api_request($method, $parameters) {
     if ($access_token === '') return [];
     $parameters['access_token'] = $access_token;
     $parameters['v'] = trim((string)getenv('VK_API_VERSION')) ?: '5.199';
-    $ch = curl_init('https://api.vk.com/method/' . rawurlencode($method));
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => http_build_query($parameters),
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT => 15
-    ]);
-    $response = curl_exec($ch);
-    $error = curl_error($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    $result = $response === false ? null : json_decode($response, true);
+    $response = http_post('https://api.vk.com/method/' . rawurlencode($method), http_build_query($parameters));
+    $status = $response['status'];
+    $result = $response['body'] === false ? null : json_decode($response['body'], true);
     if (!is_array($result) || $status < 200 || $status >= 300) {
-        throw new RuntimeException($error ?: 'Не удалось получить ответ VK API.');
+        throw new RuntimeException($response['error'] ?: 'Не удалось получить ответ VK API.');
     }
     if (!empty($result['error'])) {
         throw new RuntimeException((string)($result['error']['error_msg'] ?? 'VK API отклонил запрос.'));
@@ -114,21 +188,13 @@ function vk_api_request($method, $parameters) {
 }
 
 function fetch_telegram_channel_page($channel) {
-    if (!preg_match('/^[A-Za-z][A-Za-z0-9_]{4,31}$/', (string)$channel)) return false;
-    $ch = curl_init('https://t.me/s/' . rawurlencode($channel));
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 5,
+    if (!is_valid_telegram_channel($channel)) return false;
+    return http_get('https://t.me/s/' . rawurlencode($channel), [
         CURLOPT_TIMEOUT => 12,
-        CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_MAXREDIRS => 2,
         CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
         CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; MemeTinder/1.0)'
     ]);
-    $html = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    return $html !== false && $status >= 200 && $status < 300 ? $html : false;
 }
 
 function build_telegram_preview_posts($source, $count = 4) {
@@ -158,8 +224,7 @@ function build_telegram_preview_posts($source, $count = 4) {
         if (!$images) continue;
         $text = '';
         if (preg_match('~<div class="tgme_widget_message_text[^\"]*"[^>]*>(.*?)</div>~si', $content, $text_match)) {
-            $text = html_entity_decode(strip_tags($text_match[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-            $text = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
+            $text = clean_html_text($text_match[1]);
         }
         $posts[] = [
             'image' => $images[0],
@@ -175,7 +240,7 @@ function build_telegram_preview_posts($source, $count = 4) {
 
 function build_vk_preview_posts($source, $count = 4) {
     $domain = trim((string)($source['id'] ?? ''));
-    if (!preg_match('/^[A-Za-z0-9_.-]{1,64}$/', $domain)) return [];
+    if (!is_valid_vk_domain($domain)) return [];
     $response = vk_api_request('wall.get', ['domain' => $domain, 'count' => max(1, min(100, $count))]);
     $posts = [];
     foreach (($response['items'] ?? []) as $post) {
@@ -190,8 +255,7 @@ function build_vk_preview_posts($source, $count = 4) {
             if (is_string($url) && str_starts_with($url, 'https://')) $images[] = $url;
         }
         if (!$images) continue;
-        $text = html_entity_decode(strip_tags((string)($post['text'] ?? '')), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        $text = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
+        $text = clean_html_text($post['text'] ?? '');
         $owner_id = (string)($post['owner_id'] ?? '');
         $post_id = (string)($post['id'] ?? '');
         $posts[] = [
