@@ -52,6 +52,10 @@ function empty_history() {
     return array_fill_keys(HISTORY_COLLECTIONS, []);
 }
 
+// PARSER_RUNTIME_VERSION входит в имя файлов лога и состояния. Меняйте его при смене пайплайна,
+// чтобы старые логи (например, с прежним OCR-стеком) не попадали в консоль после git pull.
+const PARSER_RUNTIME_VERSION = 'vision2';
+
 function parser_runtime_file($suffix) {
-    return __DIR__ . '/.meme-tinder-' . substr(hash('sha256', __DIR__), 0, 16) . $suffix;
+    return __DIR__ . '/.meme-tinder-' . PARSER_RUNTIME_VERSION . '-' . substr(hash('sha256', __DIR__), 0, 16) . $suffix;
 }
