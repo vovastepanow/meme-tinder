@@ -1,17 +1,22 @@
 <?php
 
+// Общие настройки приложения. Секреты и значения, специфичные для сервера, задаются
+// в config.local.php (он не отслеживается git). Шаблон: config.local.example.php.
+$local_config = is_file(__DIR__ . '/config.local.php') ? (require __DIR__ . '/config.local.php') : [];
+$local_config = is_array($local_config) ? $local_config : [];
+
 // ---- VK ID (вход для подбора пабликов) ----
-// Заполните на сервере. Остальные переменные окружения не нужны.
 // VK_CLIENT_ID — ID приложения из кабинета VK ID.
 // VK_REDIRECT_URI — ровно такой же адрес, как в настройках приложения VK ID, например:
 //   https://ВАШ_ДОМЕН/index.php?action=vk_oauth_callback
-const VK_CLIENT_ID = '';
-const VK_REDIRECT_URI = '';
-const VK_SERVICE_TOKEN = '';   // необязательно
-const VK_OAUTH_SCOPE = '';     // необязательно: права, которые просит приложение
-
-// Значения выше попадают в окружение процесса, чтобы vk_oauth_config() и фоновый парсер видели их.
-foreach (['VK_CLIENT_ID' => VK_CLIENT_ID, 'VK_REDIRECT_URI' => VK_REDIRECT_URI, 'VK_SERVICE_TOKEN' => VK_SERVICE_TOKEN, 'VK_OAUTH_SCOPE' => VK_OAUTH_SCOPE] as $name => $value) {
+$vk_settings = [
+    'VK_CLIENT_ID' => $local_config['VK_CLIENT_ID'] ?? '',
+    'VK_REDIRECT_URI' => $local_config['VK_REDIRECT_URI'] ?? '',
+    'VK_SERVICE_TOKEN' => $local_config['VK_SERVICE_TOKEN'] ?? '',
+    'VK_OAUTH_SCOPE' => $local_config['VK_OAUTH_SCOPE'] ?? '',
+];
+// Значения попадают в окружение процесса, чтобы vk_oauth_config() и фоновый парсер видели их.
+foreach ($vk_settings as $name => $value) {
     if (getenv($name) === false || getenv($name) === '') putenv($name . '=' . $value);
 }
 

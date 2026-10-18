@@ -1,4 +1,14 @@
-# Runtime state of the background parser and VK tokens: never commit.
+# Секреты сервера (VK и прочее): никогда не коммитить.
+config.local.php
+
+# Пользовательские данные: пул мемов, история оценок, источники.
+# Приложение создаёт и перезаписывает эти файлы, поэтому git их не отслеживает.
+memes_pool.json
+meme_history.json
+sources_db.json
+
+# Состояние фонового парсера, блокировки, логи и временные файлы записи.
 .meme-tinder-*
+.meme-data-*
 *.lock
 *.log
