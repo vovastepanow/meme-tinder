@@ -1,4 +1,4 @@
-// image-viewer.js — полноэкранный просмотр изображений: зум колесом и перетаскивание.
+// image-viewer.js — полноэкранный просмотр: картинки (зум колесом и перетаскивание) и видео (плеер со звуком).
 const IMAGE_VIEWER_MAX_ZOOM = 5;
 const IMAGE_VIEWER_CLICK_TOLERANCE = 4;
 const IMAGE_VIEWER_MIN_FILL = 0.7;
@@ -47,10 +47,18 @@ function zoomImageViewer(factor, clientX, clientY) {
     applyImageViewerTransform();
 }
 
-function openImageViewer(source, altText) {
-    const viewer = document.getElementById('image-viewer');
+function openViewer() {
+    document.getElementById('image-viewer').hidden = false;
+    document.body.classList.add('image-viewer-open');
+}
+
+export function openImageViewer(source, altText) {
     const image = document.getElementById('image-viewer-image');
+    document.getElementById('image-viewer').classList.remove('is-video');
+    document.getElementById('image-viewer-video').hidden = true;
+    document.getElementById('image-viewer-hint').textContent = 'Колесо — зум до 5×, перетаскивание — сдвиг, клик — закрыть';
     Object.assign(imageViewerState, { zoom: 1, x: 0, y: 0, drag: null });
+    image.hidden = false;
     image.alt = altText || 'Просмотр изображения';
     image.style.width = '';
     image.style.height = '';
@@ -58,15 +66,35 @@ function openImageViewer(source, altText) {
     image.src = source;
     if (image.complete) fitImageViewer();
     applyImageViewerTransform();
-    viewer.hidden = false;
-    document.body.classList.add('image-viewer-open');
+    openViewer();
+}
+
+/** Видео открывается со звуком и стандартными контролами; $startAt — позиция, с которой продолжить. */
+export function openVideoViewer(source, poster = '', startAt = 0) {
+    const video = document.getElementById('image-viewer-video');
+    document.getElementById('image-viewer').classList.add('is-video');
+    document.getElementById('image-viewer-image').hidden = true;
+    document.getElementById('image-viewer-hint').textContent = 'Esc или клик по фону — закрыть';
+    video.hidden = false;
+    video.poster = poster;
+    video.src = source;
+    video.muted = false;
+    video.addEventListener('loadedmetadata', () => {
+        if (startAt > 0 && startAt < video.duration) video.currentTime = startAt;
+    }, { once: true });
+    openViewer();
+    video.play().catch(() => { /* автозапуск запрещён — пользователь нажмёт «play» сам */ });
 }
 
 function closeImageViewer() {
     const viewer = document.getElementById('image-viewer');
+    const video = document.getElementById('image-viewer-video');
     viewer.hidden = true;
-    viewer.classList.remove('is-dragging');
+    viewer.classList.remove('is-dragging', 'is-video');
     document.getElementById('image-viewer-image').removeAttribute('src');
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
     document.body.classList.remove('image-viewer-open');
     imageViewerState.drag = null;
 }
@@ -92,12 +120,13 @@ export function initializeImageViewer() {
         if (!viewer.hidden) fitImageViewer();
     });
     viewer.addEventListener('wheel', event => {
+        if (viewer.classList.contains('is-video')) return;
         event.preventDefault();
         zoomImageViewer(event.deltaY < 0 ? 1.2 : 1 / 1.2, event.clientX, event.clientY);
     }, { passive: false });
 
     viewer.addEventListener('pointerdown', event => {
-        if (event.button !== 0 || event.target.closest('button')) return;
+        if (event.button !== 0 || event.target.closest('button, video')) return;
         imageViewerState.drag = {
             pointerId: event.pointerId,
             startX: event.clientX,

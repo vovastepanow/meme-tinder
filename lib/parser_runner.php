@@ -1,10 +1,10 @@
 <?php
 // Запуск фонового парсера (cron_parser.php) и чтение его журнала.
 
-const PARSER_ACTIVITY_LINES = 200;
+const PARSER_ACTIVITY_LINES = 400; // с потоковыми размышлениями строк в журнале заметно больше
 
 /** Последние строки лога парсера для консоли. Строки не обрезаются: в них могут быть полные размышления модели. */
-function meme_parser_activity() {
+function content_parser_activity() {
     $lines = @file(parser_runtime_file('.log'), FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     if (!is_array($lines)) return [];
 
@@ -17,7 +17,7 @@ function meme_parser_activity() {
     return $activity;
 }
 
-function meme_parser_process_running($pid) {
+function content_parser_process_running($pid) {
     if ($pid < 1) return false;
     $command_line = @file_get_contents('/proc/' . $pid . '/cmdline');
     if ($command_line !== false) {
@@ -30,22 +30,28 @@ function meme_parser_process_running($pid) {
  * Запускает парсер в фоне, если он ещё не работает. $force — запуск без учёта паузы между запусками.
  * Возвращает 'started', 'running', 'cooldown' или 'unavailable'.
  */
-function start_meme_parser_if_needed($force = false) {
+/** Работает ли сейчас фоновый парсер. */
+function content_parser_is_running() {
+    $state = json_decode((string)@file_get_contents(parser_runtime_file('.json')), true) ?: [];
+    return content_parser_process_running((int)($state['pid'] ?? 0));
+}
+
+function start_content_parser_if_needed($force = false) {
     if (!function_exists('exec')) return 'unavailable';
     $state_file = parser_runtime_file('.json');
     $lock_handle = @fopen($state_file . '.lock', 'c+');
     if (!$lock_handle || !flock($lock_handle, LOCK_EX)) return 'unavailable';
     try {
-        return launch_meme_parser_locked($state_file, $force);
+        return launch_content_parser_locked($state_file, $force);
     } finally {
         flock($lock_handle, LOCK_UN);
         fclose($lock_handle);
     }
 }
 
-function launch_meme_parser_locked($state_file, $force) {
+function launch_content_parser_locked($state_file, $force) {
     $state = json_decode(@file_get_contents($state_file), true) ?: [];
-    if (meme_parser_process_running((int)($state['pid'] ?? 0))) return 'running';
+    if (content_parser_process_running((int)($state['pid'] ?? 0))) return 'running';
     if (!$force && !empty($state['started_at']) && time() - (int)$state['started_at'] < PARSER_COOLDOWN_SECONDS) return 'cooldown';
 
     $php_binary = PHP_BINARY;

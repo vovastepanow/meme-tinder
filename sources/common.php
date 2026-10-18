@@ -5,7 +5,7 @@ const PLATFORM_DVACH = 'Двач';
 const PLATFORM_TELEGRAM = 'Telegram';
 const PLATFORM_VK = 'ВКонтакте';
 
-/** Префиксы в поле source, по которым площадка определяется у сохранённых мемов. */
+/** Префиксы в поле source, по которым площадка определяется у сохранённых записей. */
 const SOURCE_NAME_PREFIXES = [
     PLATFORM_TELEGRAM => 'Telegram | ',
     PLATFORM_VK => 'ВКонтакте | '
@@ -53,9 +53,9 @@ function source_display_name($platform, $name) {
     return (SOURCE_NAME_PREFIXES[$platform] ?? '') . $name;
 }
 
-/** Площадка мема по полю source (у старых записей другого признака нет). */
-function meme_platform($meme) {
-    $source = (string)($meme['source'] ?? '');
+/** Площадка записи по полю source. */
+function content_platform($item) {
+    $source = (string)($item['source'] ?? '');
     foreach (SOURCE_NAME_PREFIXES as $platform => $prefix) {
         if (str_starts_with($source, $prefix)) return $platform;
     }

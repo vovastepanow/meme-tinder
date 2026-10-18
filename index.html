@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Умная ИИ Мемо-Панель</title>
+    <title>Content Tinder — ИИ-подборщик контента</title>
     <link rel="stylesheet" href="css/main-layout.css">
     <link rel="stylesheet" href="css/components.css">
     <link rel="stylesheet" href="css/overlays.css">
@@ -11,17 +11,17 @@
 </head>
 <body>
 
-    <section id="meme-activity-ticker" class="activity-console" aria-label="Журнал приложения">
-        <div class="activity-console-header"><span class="console-indicator"></span><strong>Журнал приложения</strong><span id="activity-console-status">готово</span><button id="activity-console-follow" type="button" hidden>К концу ↓</button></div>
-        <div id="meme-activity-track" class="activity-console-output" role="log" aria-live="polite"></div>
+    <section id="activity-console" class="activity-console" aria-label="Журнал приложения">
+        <div class="activity-console-header"><span class="console-indicator"></span><strong>Журнал</strong><span id="activity-console-status">готово</span><button id="activity-console-follow" class="activity-console-follow" type="button" hidden>К концу ↓</button></div>
+        <div id="activity-track" class="activity-console-output" role="log" aria-live="polite"></div>
     </section>
 
     <main class="app-main">
     <nav class="tabs" role="tablist">
-        <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-tab="meme-tab">🗿 Оценка Мемов</button>
-        <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="source-tab">🔎 Подбор Источников</button>
-        <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="test-tab">🧪 Тест ИИ</button>
-        <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="database-tab">🗄️ Базы данных</button>
+        <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-tab="content-tab">Оценка контента</button>
+        <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="source-tab">Источники</button>
+        <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="test-tab">Тест ИИ</button>
+        <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="database-tab">Базы данных</button>
     </nav>
 
     <div id="debug-banner" class="debug-banner" hidden>
@@ -29,55 +29,66 @@
         <button id="debug-reset-button" type="button">Сбросить демо</button>
     </div>
 
-    <!-- ВКЛАДКА 1: ОЦЕНКА МЕМОВ -->
-    <div id="meme-tab" class="view-panel active">
-        <div id="meme-loading" class="status-msg">Загрузка мема...</div>
-        <div id="meme-error" class="status-msg error-msg" role="alert" hidden></div>
+    <!-- ВКЛАДКА 1: ОЦЕНКА КОНТЕНТА -->
+    <div id="content-tab" class="view-panel active">
+        <form id="topic-form" class="topic-form">
+            <label for="topic-input">Тема поиска</label>
+            <div class="topic-row">
+                <input id="topic-input" type="text" maxlength="200" placeholder="Например: котики, космос, ретро-автомобили" autocomplete="off" required>
+                <button id="topic-save" type="submit">Сохранить</button>
+            </div>
+        </form>
 
-        <div id="meme-card-wrapper" class="meme-card-wrapper" hidden>
+        <div id="item-loading" class="status-msg">Загрузка…</div>
+        <div id="item-searching" class="status-msg" role="status" hidden></div>
+        <div id="item-error" class="status-msg error-msg" role="alert" hidden></div>
+
+        <div id="item-card-wrapper" class="item-card-wrapper" hidden>
             <div class="card">
                 <div class="media-shell">
                     <button id="carousel-prev" class="carousel-btn" type="button" aria-label="Предыдущая картинка">‹</button>
                     <div class="img-wrap">
-                        <video id="meme-video" controls muted loop playsinline preload="metadata" hidden></video>
-                        <img id="meme-image" alt="Мем" hidden>
+                        <video id="item-video" controls playsinline preload="metadata" hidden></video>
+                        <img id="item-image" alt="Запись" hidden>
+                        <div id="item-media-fallback" class="media-fallback" hidden>Картинка недоступна: источник удалил файл или ссылка устарела.</div>
+                        <button id="item-expand" class="media-expand" type="button" title="Открыть на весь экран" aria-label="Открыть на весь экран">⤢</button>
                     </div>
                     <button id="carousel-next" class="carousel-btn" type="button" aria-label="Следующая картинка">›</button>
                 </div>
                 <div class="slide-caption">
-                    <span id="meme-slide-caption"></span>
-                    <span id="meme-slide-position" class="slide-position"></span>
+                    <span id="item-slide-caption"></span>
+                    <span id="item-slide-position" class="slide-position"></span>
                 </div>
                 <div class="info">
-                    <span id="meme-rating" class="badge">🔮 0%</span>
-                    <div id="meme-source" class="source-text">📍 Источник: --</div>
-                    <a id="meme-source-link" class="source-post-link" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a>
-                    <div id="meme-why-funny" class="meme-ai-note"><strong>Почему смешно:</strong> <span id="meme-why-funny-text"></span></div>
-                    <span id="meme-is-funny" class="meme-funny-badge">Смешно? --</span>
-                    <div id="meme-desc" class="desc-text"><strong>ИИ Описание:</strong> --</div>
+                    <span id="item-rating" class="badge">0%</span>
+                    <div id="item-source" class="source-text">Источник: —</div>
+                    <a id="item-source-link" class="source-post-link" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a>
+                    <span id="item-relevance" class="relevance-badge">По теме: —</span>
+                    <div class="item-ai-note"><strong>Почему по теме:</strong> <span id="item-why-text"></span></div>
+                    <div id="item-desc" class="desc-text"><strong>Описание ИИ:</strong> —</div>
                 </div>
             </div>
             <div class="controls">
                 <div class="complaint-wrap">
-                    <button id="complaint-button" class="btn btn-wrong" type="button" title="Пожаловаться: не мем или что-то сломано" aria-haspopup="menu" aria-expanded="false">🚩</button>
+                    <button id="complaint-button" class="btn btn-wrong" type="button" title="Пожаловаться: не по теме или что-то сломано" aria-haspopup="menu" aria-expanded="false">🚩</button>
                     <div id="complaint-menu" class="complaint-menu" role="menu" hidden>
-                        <button type="button" role="menuitem" data-reason="not_meme">Не мем / не смешная картинка</button>
+                        <button type="button" role="menuitem" data-reason="off_topic">Не по теме</button>
                         <button type="button" role="menuitem" data-reason="broken">Сломано: не грузится, обрезано, битый пост</button>
                         <button type="button" role="menuitem" data-reason="other">Другое</button>
                     </div>
                 </div>
                 <button class="btn" type="button" data-vote="postpone" title="Отложить: без оценки, в конец очереди" aria-label="Отложить">✋</button>
-                <button class="btn" type="button" data-vote="dislike" title="Треш" aria-label="Треш">💩</button>
-                <button class="btn" type="button" data-vote="maybe" title="Не знаю" aria-label="Не знаю">🤷‍♂️</button>
-                <button class="btn" type="button" data-vote="like" title="Годно" aria-label="Годно">🗿</button>
+                <button class="btn" type="button" data-vote="dislike" title="Не нравится" aria-label="Не нравится">👎</button>
+                <button class="btn" type="button" data-vote="maybe" title="Не знаю" aria-label="Не знаю">🤷</button>
+                <button class="btn" type="button" data-vote="like" title="Нравится" aria-label="Нравится">👍</button>
             </div>
         </div>
 
-        <div id="meme-empty" class="status-msg meme-empty" hidden>
-            <span id="meme-empty-message">Пул мемов пуст.</span>
-            <div class="meme-empty-actions">
-                <button id="meme-search-button" class="meme-add-button" type="button">Найти мемы</button>
-                <button id="meme-add-button" class="meme-add-button secondary" type="button">Добавить мем</button>
+        <div id="item-empty" class="status-msg item-empty" hidden>
+            <span id="item-empty-message">Пул контента пуст.</span>
+            <div class="item-empty-actions">
+                <button id="item-search-button" class="primary-button" type="button">Найти контент</button>
+                <button id="item-add-button" class="secondary-button" type="button">Добавить вручную</button>
             </div>
         </div>
     </div>
@@ -94,7 +105,7 @@
                     <option value="dvach">Двач</option>
                 </select>
             </label>
-            <button id="source-search-button" class="tab-btn search-trigger" type="button">🔎 Найти новый источник</button>
+            <button id="source-search-button" class="search-trigger" type="button">Найти новый источник</button>
             <div class="vk-auth-actions">
                 <button id="vk-oauth-button" class="vk-oauth-button" type="button">Подключить VK</button>
                 <span id="vk-oauth-status" role="status">Проверяю подключение VK...</span>
@@ -106,15 +117,15 @@
         <div id="source-inspection-zone" class="source-inspection-zone" hidden>
             <div class="source-meta">
                 <h3 id="inspect-source-name">Загрузка...</h3>
-                <span id="inspect-source-reason">Причина...</span>
+                <span id="inspect-source-reason"></span>
             </div>
 
             <!-- Плитка с несколькими постами источника -->
             <div id="posts-grid" class="grid-container"></div>
 
             <div class="controls controls-compact">
-                <button class="btn btn-action-reject" type="button" data-source-vote="reject" title="Отклонить источник" aria-label="Отклонить источник">💩</button>
-                <button class="btn btn-action-approve" type="button" data-source-vote="approve" title="Одобрить источник" aria-label="Одобрить источник">🗿</button>
+                <button class="btn btn-action-reject" type="button" data-source-vote="reject" title="Отклонить источник" aria-label="Отклонить источник">👎</button>
+                <button class="btn btn-action-approve" type="button" data-source-vote="approve" title="Одобрить источник" aria-label="Одобрить источник">👍</button>
             </div>
         </div>
     </div>
@@ -124,7 +135,7 @@
         <form id="analyze-form" class="analyze-form">
             <label class="field-label" for="image-url">Ссылка на изображение</label>
             <div class="url-input-row">
-                <input id="image-url" name="image_url" type="url" placeholder="https://example.com/meme.jpg" autocomplete="url">
+                <input id="image-url" name="image_url" type="url" placeholder="https://example.com/picture.jpg" autocomplete="url">
                 <button id="analyze-button" class="analyze-button" type="submit">Оценить</button>
             </div>
             <div class="form-divider"><span>или выберите файл</span></div>
@@ -132,27 +143,25 @@
                 <span>Выбрать изображение</span>
                 <input id="image-file" name="image_file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp">
             </label>
-            <div class="field-hint">JPEG, PNG, GIF, WebP или BMP. Максимум 10 МБ.</div>
+            <div class="field-hint">JPEG, PNG, GIF, WebP или BMP. Максимум 10 МБ. Оценка — по текущей теме поиска; размышления модели видны в журнале.</div>
         </form>
 
         <div id="test-error" class="status-msg error-msg" role="alert" hidden></div>
-        <div id="test-loading" class="status-msg" role="status" hidden>ИИ анализирует изображение...</div>
+        <div id="test-loading" class="status-msg" role="status" hidden>ИИ анализирует изображение…</div>
         <section id="test-result" class="test-result" aria-live="polite" hidden>
-            <div class="test-image-comparison">
-                <figure class="test-image-figure">
-                    <figcaption>Оригинал</figcaption>
-                    <div class="test-preview"><img id="test-image" alt="Исходное изображение"></div>
-                </figure>
-            </div>
+            <figure class="test-image-figure">
+                <figcaption>Оригинал</figcaption>
+                <div class="test-preview"><img id="test-image" alt="Исходное изображение"></div>
+            </figure>
             <div class="test-info">
                 <div class="test-result-heading">
-                    <h2>Оценка мемности</h2>
-                    <span id="test-rating" class="badge">🔮 0%</span>
+                    <h2>Оценка</h2>
+                    <span id="test-rating" class="badge" title="Прогноз: насколько вам понравится">0%</span>
                 </div>
                 <div id="test-model" class="source-text"></div>
+                <span id="test-relevance" class="relevance-badge"></span>
                 <div id="test-description" class="desc-text"></div>
-                <div id="test-why-funny" class="meme-ai-note"></div>
-                <span id="test-is-funny" class="meme-funny-badge"></span>
+                <div id="test-why" class="item-ai-note"></div>
             </div>
         </section>
     </div>
@@ -174,6 +183,11 @@
         <div id="database-status" class="database-status" role="status">Выберите базу для просмотра записей.</div>
         <div id="database-records" class="database-records"></div>
 
+        <div class="database-danger-zone">
+            <span>Очистить все базы: пул и история станут пустыми, каталог источников — стандартным, и сразу начнётся поиск контента по текущей теме.</span>
+            <button id="database-reset" class="database-reset-button" type="button">Очистить все базы</button>
+        </div>
+
         <dialog id="database-edit-dialog" class="database-edit-dialog">
             <form id="database-edit-form">
                 <h2 id="database-dialog-title">Редактировать запись</h2>
@@ -189,9 +203,10 @@
 
     </main>
 
-    <div id="image-viewer" class="image-viewer" role="dialog" aria-modal="true" aria-label="Просмотр изображения" hidden>
+    <div id="image-viewer" class="image-viewer" role="dialog" aria-modal="true" aria-label="Просмотр" hidden>
         <button id="image-viewer-close" class="image-viewer-close" type="button" aria-label="Закрыть просмотр">×</button>
         <img id="image-viewer-image" alt="" draggable="false">
+        <video id="image-viewer-video" controls playsinline hidden></video>
         <div id="image-viewer-hint" class="image-viewer-hint">Колесо — зум до 5×, перетаскивание — сдвиг, клик — закрыть</div>
     </div>
 </body>

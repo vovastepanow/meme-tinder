@@ -1,10 +1,9 @@
 <?php
-// Кандидаты для ИИ и пул мемов: нормализация постов, учёт уже виденных картинок, безопасная запись в пул.
+// Кандидаты для ИИ и пул контента: нормализация постов, учёт уже виденных картинок, безопасная запись в пул.
 
-/** Подпись поста для ИИ. На Дваче комментарий почти всегда не относится к картинке, поэтому его не передаём. */
-function post_caption_for_ai($meme) {
-    if (meme_platform($meme) === PLATFORM_DVACH) return '';
-    $text = trim((string)($meme['text'] ?? ''));
+/** Подпись поста для ИИ (модель сама решает, связана ли она с картинкой). */
+function post_caption_for_ai($item) {
+    $text = trim((string)($item['text'] ?? ''));
     return $text === EMPTY_POST_TEXT ? '' : $text;
 }
 
@@ -37,7 +36,7 @@ function expand_post_images($posts) {
 
 /** Все картинки, которые уже лежат в пуле или уже оценены (читается заново с диска). Ключи — адреса картинок. */
 function collect_known_images($pool_file, $history_file) {
-    $known = array_map('meme_image_key', load_data($pool_file, []));
+    $known = array_map('content_image_key', load_data($pool_file, []));
     $history = load_data($history_file, []);
     foreach (HISTORY_COLLECTIONS as $key) {
         $known = array_merge($known, array_column($history[$key] ?? [], 'image'));
@@ -48,14 +47,14 @@ function collect_known_images($pool_file, $history_file) {
 }
 
 /**
- * Добавляет мем в пул под блокировкой, не затирая голоса пользователя, сделанные пока парсер работал.
- * Возвращает true, если мем добавлен (false — он уже в пуле или уже оценён).
+ * Добавляет запись в пул под блокировкой, не затирая голоса пользователя, сделанные пока парсер работал.
+ * Возвращает true, если запись добавлена (false — она уже в пуле или уже оценена).
  */
-function add_meme_to_pool_safely($pool_file, $history_file, $meme) {
+function add_item_to_pool_safely($pool_file, $history_file, $item) {
     $added = false;
-    update_data($pool_file, [], function ($pool) use ($pool_file, $history_file, $meme, &$added) {
-        if (isset(collect_known_images($pool_file, $history_file)[$meme['image']])) return null;
-        $pool[] = $meme;
+    update_data($pool_file, [], function ($pool) use ($pool_file, $history_file, $item, &$added) {
+        if (isset(collect_known_images($pool_file, $history_file)[$item['image']])) return null;
+        $pool[] = $item;
         usort($pool, function ($a, $b) {
             return ($b['rating'] ?? 0) <=> ($a['rating'] ?? 0);
         });

@@ -1,14 +1,24 @@
 # Секреты сервера (VK и прочее): никогда не коммитить.
 config.local.php
 
-# Пользовательские данные: пул мемов, история оценок, источники.
+# Пользовательские данные: пул контента, история оценок, источники, настройки.
 # Приложение создаёт и перезаписывает эти файлы, поэтому git их не отслеживает.
-memes_pool.json
-meme_history.json
+content_pool.json
+content_history.json
 sources_db.json
+settings.json
+
+# Кэш картинок и видео отобранного контента.
+media_cache/
 
 # Состояние фонового парсера, блокировки, логи и временные файлы записи.
-.meme-tinder-*
-.meme-data-*
+.content-tinder-*
+.content-data-*
 *.lock
 *.log
+
+# Данные и служебные файлы версии Meme Tinder (до перехода на контент).
+memes_pool.json
+meme_history.json
+.meme-tinder-*
+.meme-data-*

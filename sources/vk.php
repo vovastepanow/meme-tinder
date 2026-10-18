@@ -15,9 +15,9 @@ function vk_oauth_config() {
 }
 
 function vk_token_file() {
-    $configured_path = trim((string)getenv('MEME_TINDER_VK_TOKEN_FILE'));
+    $configured_path = trim((string)getenv('CONTENT_TINDER_VK_TOKEN_FILE'));
     if ($configured_path !== '') return $configured_path;
-    return rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'meme-tinder-vk-' . substr(hash('sha256', __DIR__), 0, 16) . '.json';
+    return rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'content-tinder-vk-' . substr(hash('sha256', __DIR__), 0, 16) . '.json';
 }
 
 function load_vk_tokens() {

@@ -55,10 +55,19 @@ export function pluralRu(count, one, few, many) {
 const CONSOLE_MAX_LINES = 200;
 const consoleState = { lineCount: 0, parserLines: [], followsTail: true };
 
-// Строки вида "[ИИ → model] текст", "[ИИ ← model] текст" и "[ИИ мысли model] текст" (см. record_ai_exchange в http_client.php).
-const AI_LOG_LINE_PATTERN = /^\[ИИ (→|←|мысли) ([^\]]+)\] ?([\s\S]*)$/;
+// Строки обмена с моделью (см. record_ai_exchange в http_client.php):
+// "[ИИ → model] запрос", "[ИИ ← model] ответ", "[ИИ мысли model] начало размышлений", "[ИИ мысли+ model] продолжение".
+const AI_LOG_LINE_PATTERN = /^\[ИИ (→|←|мысли\+?) ([^\]]+)\] ?([\s\S]*)$/;
 const AI_LABELS = { '→': 'запрос →', '←': 'ответ ←', 'мысли': 'размышления' };
 const AI_CLASSES = { '→': 'ai-request', '←': 'ai-response', 'мысли': 'ai-thinking' };
+
+/** Блок размышлений, который модель ещё дописывает: продолжения ('мысли+') добавляются в него. */
+let liveThinkingEntry = null;
+
+function finishLiveThinking() {
+    liveThinkingEntry?.classList.remove('is-live');
+    liveThinkingEntry = null;
+}
 
 /** Обмен с моделью показывается «пузырём»: запрос, ответ или размышления, свёрнутые до 4 строк. */
 function renderAiConsoleEntry(entry, timestamp, direction, model, text) {
@@ -71,29 +80,53 @@ function renderAiConsoleEntry(entry, timestamp, direction, model, text) {
     entry.addEventListener('click', () => entry.classList.toggle('is-expanded'));
 }
 
-/** Добавляет строку в журнал на странице. */
-export function log(message) {
-    const track = $('meme-activity-track');
-    const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const entry = el('p', { className: 'activity-console-line' });
-    const aiExchange = AI_LOG_LINE_PATTERN.exec(message);
-    if (aiExchange) {
-        renderAiConsoleEntry(entry, timestamp, ...aiExchange.slice(1));
-    } else {
-        entry.textContent = `${timestamp} ${message}`;
-    }
+function appendConsoleEntry(entry) {
+    const track = $('activity-track');
     track.appendChild(entry);
     consoleState.lineCount++;
-
     while (consoleState.lineCount > CONSOLE_MAX_LINES) {
-        track.firstElementChild?.remove();
+        const first = track.firstElementChild;
+        if (first === liveThinkingEntry) break;
+        first?.remove();
         consoleState.lineCount--;
     }
+}
+
+function scrollConsoleToTail() {
+    const track = $('activity-track');
     if (consoleState.followsTail) track.scrollTop = track.scrollHeight;
 }
 
-export function setConsoleStatus(text) {
+/** Добавляет строку в журнал на странице. */
+export function log(message) {
+    const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const aiExchange = AI_LOG_LINE_PATTERN.exec(message);
+    if (!aiExchange) {
+        appendConsoleEntry(el('p', { className: 'activity-console-line', textContent: `${timestamp} ${message}` }));
+        scrollConsoleToTail();
+        return;
+    }
+
+    const [, direction, model, text] = aiExchange;
+    if (direction === 'мысли+' && liveThinkingEntry) {
+        liveThinkingEntry.querySelector('.ai-message-text').append(` ${text}`);
+        scrollConsoleToTail();
+        return;
+    }
+    if (direction !== 'мысли+') finishLiveThinking();
+    const entry = el('p', { className: 'activity-console-line' });
+    renderAiConsoleEntry(entry, timestamp, direction === 'мысли+' ? 'мысли' : direction, model, text);
+    if (direction.startsWith('мысли')) {
+        entry.classList.add('is-live');
+        liveThinkingEntry = entry;
+    }
+    appendConsoleEntry(entry);
+    scrollConsoleToTail();
+}
+
+export function setConsoleStatus(text, active = false) {
     $('activity-console-status').textContent = text;
+    $('activity-console').classList.toggle('is-active', active);
 }
 
 /** Начинает новый сеанс журнала парсера: следующая порция строк будет выведена целиком. */
@@ -123,7 +156,7 @@ export function appendParserActivity(activity) {
 }
 
 export function initializeActivityConsole() {
-    const track = $('meme-activity-track');
+    const track = $('activity-track');
     const followButton = $('activity-console-follow');
     const updateFollowState = () => {
         consoleState.followsTail = track.scrollHeight - track.scrollTop - track.clientHeight <= 24;
@@ -140,18 +173,20 @@ export function initializeActivityConsole() {
 
 // ---- API ----
 
-/** Подписи действий API для журнала. Частые фоновые запросы (get_current_meme, vk_oauth_status) не логируются. */
+/** Подписи действий API для журнала. Частые фоновые запросы (get_current_item, parser_status, settings, vk_oauth_status) не логируются. */
 const ACTION_LOG_LABELS = {
-    refresh_memes: 'Запущен поиск мемов',
+    refresh_content: 'Запущен поиск контента',
+    save_topic: 'Сохранение темы поиска',
     analyze_image: 'Запущен анализ изображения',
     suggest_sources: 'Поиск нового источника',
-    meme_vote: 'Сохранение оценки мема',
+    vote: 'Сохранение оценки',
     source_vote: 'Сохранение решения по источнику',
     database_add: 'Добавление записи в базу',
     database_update: 'Обновление записи в базе',
     database_delete: 'Удаление записи из базы',
     database_read: 'Загрузка записей базы',
     database_options: 'Загрузка списка баз',
+    database_reset: 'Очистка всех баз',
     debug_reset: 'Сброс демо-данных'
 };
 
@@ -178,7 +213,7 @@ export async function api(action, { body, params } = {}) {
     if (ACTION_LOG_LABELS[action]) log(ACTION_LOG_LABELS[action]);
     const options = { method: body === undefined ? 'GET' : 'POST', headers: {} };
     if (options.method === 'POST') {
-        options.headers['X-Meme-Tinder'] = '1';
+        options.headers['X-Content-Tinder'] = '1';
         if (body instanceof FormData) {
             options.body = body;
         } else if (body !== null) {
@@ -198,6 +233,46 @@ export async function api(action, { body, params } = {}) {
     if (!response.ok) throw new ApiError(data?.message || `HTTP ${response.status}`, response.status, data);
     if (data === null) throw new ApiError('Сервер вернул некорректный ответ.', response.status, null);
     return data;
+}
+
+// ---- Наблюдение за парсером ----
+
+const PARSER_POLL_ACTIVE_MS = 2000;   // пока парсер работает — часто, чтобы размышления модели шли «вживую»
+const PARSER_POLL_IDLE_MS = 15000;    // иначе — редко, только чтобы заметить запуск
+const parserMonitor = { timer: null, running: false, inFlight: false, listeners: [] };
+
+/** Подписка на смену состояния парсера: callback(running). */
+export function onParserStateChange(listener) {
+    parserMonitor.listeners.push(listener);
+}
+
+async function pollParser() {
+    clearTimeout(parserMonitor.timer);
+    if (parserMonitor.inFlight) return; // опрос уже идёт; он сам назначит следующий
+    parserMonitor.inFlight = true;
+    let running = parserMonitor.running;
+    try {
+        const data = await api('parser_status');
+        running = Boolean(data.running);
+        if (running && !parserMonitor.running) resetParserActivity();
+        if (running || data.activity?.length) appendParserActivity(data.activity);
+    } catch {
+        // Сервер временно недоступен — попробуем при следующем опросе.
+    }
+    if (running !== parserMonitor.running) {
+        parserMonitor.running = running;
+        if (!running) finishLiveThinking();
+        parserMonitor.listeners.forEach(listener => listener(running));
+    }
+    setConsoleStatus(running ? 'парсер работает' : 'готово', running);
+    parserMonitor.inFlight = false;
+    parserMonitor.timer = setTimeout(pollParser, running ? PARSER_POLL_ACTIVE_MS : PARSER_POLL_IDLE_MS);
+}
+
+/** Запускает опрос парсера; повторный вызов опрашивает сразу (например, после нажатия «Найти контент»). */
+export function watchParser() {
+    if (DEBUG_MODE) return;
+    pollParser();
 }
 
 // ---- Вкладки ----

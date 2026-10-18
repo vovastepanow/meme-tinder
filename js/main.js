@@ -1,16 +1,16 @@
 // main.js — точка входа: собирает вкладки и запускает интерфейс. Подключается как ES-модуль, сборка не нужна.
-import { $, DEBUG_MODE, api, initializeActivityConsole, initializeTabs, log, show, switchTab } from './core.js';
+import { $, DEBUG_MODE, api, initializeActivityConsole, initializeTabs, log, show, switchTab, watchParser } from './core.js';
 import { initializeImageViewer } from './image-viewer.js';
-import { initializeMemeTab, loadCurrentMeme } from './memes.js';
+import { initializeContentTab, loadCurrentItem } from './content.js';
 import { clearDiscoveredSource, consumeVkRedirectResult, initializeSourceTab } from './sources.js';
-import { initializeDatabaseTab, openNewMemeEditor } from './database.js';
+import { initializeDatabaseTab, openNewItemEditor } from './database.js';
 import { initializeTestTab } from './test.js';
 
 async function resetDebugDemo() {
     try {
         await api('debug_reset', { body: null });
         clearDiscoveredSource();
-        await loadCurrentMeme();
+        await loadCurrentItem();
     } catch (error) {
         log(`Ошибка сброса демо: ${error.message}`);
     }
@@ -25,12 +25,13 @@ function initializeDebugMode() {
 initializeActivityConsole();
 initializeImageViewer();
 initializeTabs();
-initializeMemeTab({ onAddMeme: openNewMemeEditor });
+initializeContentTab({ onAddItem: openNewItemEditor });
 initializeSourceTab();
-initializeDatabaseTab();
+initializeDatabaseTab({ onReset: loadCurrentItem });
 initializeTestTab();
 initializeDebugMode();
 
-log('Приложение запущено. Загружаю пул мемов.');
+log('Приложение запущено. Загружаю пул контента.');
 if (consumeVkRedirectResult()) switchTab('source-tab');
-loadCurrentMeme();
+loadCurrentItem();
+watchParser();

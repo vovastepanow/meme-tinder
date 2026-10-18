@@ -3,19 +3,19 @@
 
 function database_editor_definitions() {
     return [
-        'memes_pool' => [
-            'label' => 'Пул мемов',
+        'content_pool' => [
+            'label' => 'Пул контента',
             'file' => POOL_FILE,
-            'collections' => ['items' => 'Мемы']
+            'collections' => ['items' => 'Записи']
         ],
-        'meme_history' => [
+        'content_history' => [
             'label' => 'История оценок',
             'file' => HISTORY_FILE,
             'collections' => [
-                'liked_memes' => 'Лайки',
-                'disliked_memes' => 'Дизлайки',
-                'undecided_memes' => 'Без решения',
-                'wrong_topic_memes' => 'Жалобы'
+                'liked' => 'Лайки',
+                'disliked' => 'Дизлайки',
+                'undecided' => 'Без решения',
+                'complaints' => 'Жалобы'
             ]
         ],
         'sources_db' => [
@@ -53,13 +53,13 @@ function database_editor_collection($database, $definition, $data, $collection) 
     if (!is_string($collection) || !array_key_exists($collection, $definition['collections'])) {
         throw new InvalidArgumentException('Неизвестная коллекция.');
     }
-    $items = $database === 'memes_pool' ? $data : ($data[$collection] ?? []);
+    $items = $database === 'content_pool' ? $data : ($data[$collection] ?? []);
     if (!is_array($items)) throw new RuntimeException('Коллекция должна быть массивом записей.');
     return array_values($items);
 }
 
 function database_editor_save($database, $definition, $data, $collection, $items) {
-    if ($database === 'memes_pool') {
+    if ($database === 'content_pool') {
         $data = array_values($items);
     } else {
         $data[$collection] = array_values($items);
@@ -68,9 +68,9 @@ function database_editor_save($database, $definition, $data, $collection, $items
 }
 
 function database_editor_validate_record($database, $collection, $record) {
-    if ($database === 'memes_pool') {
+    if ($database === 'content_pool') {
         if (!is_array($record) || array_is_list($record) || trim((string)($record['image'] ?? '')) === '') {
-            throw new InvalidArgumentException('Мему нужны поля-объект и непустой image.');
+            throw new InvalidArgumentException('Записи нужны поля-объект и непустой image.');
         }
         if (isset($record['rating']) && (!is_numeric($record['rating']) || $record['rating'] < 0 || $record['rating'] > 100)) {
             throw new InvalidArgumentException('rating должен быть числом от 0 до 100.');

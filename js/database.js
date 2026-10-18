@@ -1,5 +1,5 @@
 // database.js — вкладка «Базы данных»: список записей, добавление, правка и удаление.
-import { $, DEBUG_MODE, api, el, onTabOpen, pluralRu, safeSourcePostUrl, switchTab } from './core.js';
+import { $, DEBUG_MODE, api, el, log, onTabOpen, pluralRu, safeSourcePostUrl, switchTab, watchParser } from './core.js';
 
 const state = {
     databases: [],
@@ -50,8 +50,9 @@ function recordSummary(record) {
     if (typeof record === 'string') return record;
     if (record === null || typeof record !== 'object') return String(record);
     const preview = record.text || record.name || record.title || record.source || record.url || record.image || '';
-    const funny = typeof record.is_funny === 'boolean' ? `Смешно: ${record.is_funny ? 'да' : 'нет'}` : '';
-    const details = [record.rating !== undefined ? `${record.rating}%` : '', funny, record.source || '', record.why_funny || '', record.ai_description || '']
+    const relevance = record.relevance !== undefined && record.relevance !== null ? `по теме ${record.relevance}%` : '';
+    const rating = record.rating ?? record.rating_assigned;
+    const details = [rating !== undefined ? `прогноз ${rating}%` : '', relevance, record.topic ? `тема: ${record.topic}` : '', record.source || '', record.why_relevant || '', record.description || '']
         .filter(Boolean)
         .join(' · ');
     return [preview || JSON.stringify(record), details].filter(Boolean).join('\n');
@@ -104,11 +105,11 @@ async function loadRecords() {
 /** Заготовка новой записи под выбранную коллекцию. */
 function recordTemplate(database, collection) {
     const now = Math.floor(Date.now() / 1000);
-    if (database === 'memes_pool') {
-        return { image: '', text: '', ai_description: '', why_funny: '', is_funny: null, meme_probability: 0, rating: 0, source: '', board: '', thread_id: '', post_id: '', source_url: '' };
+    if (database === 'content_pool') {
+        return { image: '', text: '', description: '', why_relevant: '', relevance: 0, rating: 0, source: '', board: '', thread_id: '', post_id: '', source_url: '' };
     }
-    if (database === 'meme_history') {
-        return { image: '', text: '', ai_short_description: '', rating_assigned: 0, source: '', timestamp: now };
+    if (database === 'content_history') {
+        return { image: '', text: '', description: '', rating_assigned: 0, source: '', timestamp: now };
     }
     if (collection === '2ch_boards') return 'b';
     if (collection === 'vk_publics' || collection === 'telegram_channels') return { id: '', name: '' };
@@ -132,13 +133,13 @@ function openCreator() {
     openDialog('Добавить запись', recordTemplate(selectedDatabase(), selectedCollection()));
 }
 
-/** Открывает редактор с заготовкой нового мема (кнопка «Добавить мем» на пустом пуле). */
-export async function openNewMemeEditor() {
+/** Открывает редактор с заготовкой новой записи (кнопка «Добавить вручную» на пустом пуле). */
+export async function openNewItemEditor() {
     if (DEBUG_MODE) return;
     switchTab('database-tab');
     await loadDatabaseOptions();
     if (!state.ready) return;
-    $('database-select').value = 'memes_pool';
+    $('database-select').value = 'content_pool';
     await loadCollections();
     openCreator();
 }
@@ -172,6 +173,25 @@ async function saveRecord(event) {
     }
 }
 
+/** Очистка всех баз: сервер оставляет пустые пул и историю, стандартный каталог источников и сразу запускает поиск. */
+async function resetAllDatabases() {
+    const question = 'Очистить все базы? Пул контента и история оценок станут пустыми, каталог источников вернётся к стандартному, сохранённые картинки удалятся. Тема поиска останется. Это действие нельзя отменить.';
+    if (!window.confirm(question)) return;
+    const button = $('database-reset');
+    button.disabled = true;
+    try {
+        const data = await api('database_reset', { body: null });
+        log(`Базы очищены. Поиск контента: ${data.parser === 'started' || data.parser === 'running' ? 'запущен' : 'не запустился'}.`);
+        watchParser();
+        onDatabasesReset?.();
+        await loadRecords();
+    } catch (error) {
+        setStatus(`Не удалось очистить базы: ${error.message}`, true);
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function deleteRecord(index) {
     if (!window.confirm(`Удалить запись #${index + 1}? Это действие нельзя отменить.`)) return;
     try {
@@ -182,7 +202,10 @@ async function deleteRecord(index) {
     }
 }
 
-export function initializeDatabaseTab() {
+let onDatabasesReset = null;
+
+export function initializeDatabaseTab({ onReset } = {}) {
+    onDatabasesReset = onReset;
     if (DEBUG_MODE) {
         document.querySelector('.tab-btn[data-tab="database-tab"]').hidden = true;
         return;
@@ -193,5 +216,6 @@ export function initializeDatabaseTab() {
     $('database-add').addEventListener('click', openCreator);
     $('database-edit-form').addEventListener('submit', saveRecord);
     $('database-cancel').addEventListener('click', () => $('database-edit-dialog').close());
+    $('database-reset').addEventListener('click', resetAllDatabases);
     onTabOpen('database-tab', loadDatabaseOptions);
 }

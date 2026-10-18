@@ -23,6 +23,11 @@ function create_default_source_catalog() {
     ];
 }
 
+/**
+ * Создаёт недостающие файлы данных с тем содержимым, которое им нужно:
+ * история — пустые коллекции, каталог — стандартные источники, пул — пустой (его наполняет парсер),
+ * настройки — тема поиска по умолчанию.
+ */
 function ensure_default_project_data() {
     if (!is_file(HISTORY_FILE)) {
         save_data(HISTORY_FILE, empty_history());
@@ -38,8 +43,12 @@ function ensure_default_project_data() {
         }
     }
 
+    // Пул без файла — пустой: первый же запрос записи запустит парсер, и он наполнит пул.
     if (!is_file(POOL_FILE)) {
-        save_data(POOL_FILE, create_demo_pool());
+        save_data(POOL_FILE, []);
+    }
+    if (!is_file(SETTINGS_FILE)) {
+        save_data(SETTINGS_FILE, default_settings());
     }
 }
 
@@ -67,6 +76,17 @@ function source_vote_exists($db, $source_id) {
     }
     return false;
 }
+/**
+ * Очищает все базы: пул и история пустые, каталог источников — стандартный. Тема поиска сохраняется.
+ * Каждый файл меняется под своей блокировкой, поэтому работающий парсер не затрёт очистку. Кэш медиа удаляется целиком.
+ */
+function reset_project_data() {
+    update_data(POOL_FILE, [], function () { return []; });
+    update_data(HISTORY_FILE, empty_history(), function () { return empty_history(); });
+    update_data(SOURCES_FILE, create_default_source_catalog(), function () { return create_default_source_catalog(); });
+    return media_cache_cleanup([], true);
+}
+
 function load_history() {
     return load_data(HISTORY_FILE, empty_history());
 }

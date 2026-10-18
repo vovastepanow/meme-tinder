@@ -2,7 +2,7 @@
 // Ответы API и общие проверки запросов.
 
 /** Заголовок, который интерфейс ставит на каждый POST. Чужой сайт не может отправить его без CORS-разрешения. */
-const API_REQUEST_HEADER = 'HTTP_X_MEME_TINDER';
+const API_REQUEST_HEADER = 'HTTP_X_CONTENT_TINDER';
 
 const VK_REDIRECT_RESULTS = ['connected', 'misconfigured', 'error'];
 
@@ -32,7 +32,7 @@ function ensure_session_started() {
 /** Защита от CSRF: изменяющие запросы принимаются только от собственного интерфейса. */
 function require_api_request_header() {
     if (($_SERVER[API_REQUEST_HEADER] ?? '') !== '1') {
-        json_error('Запрос отклонён: отсутствует заголовок X-Meme-Tinder.', 403);
+        json_error('Запрос отклонён: отсутствует заголовок X-Content-Tinder.', 403);
     }
 }
 

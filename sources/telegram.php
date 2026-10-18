@@ -7,7 +7,7 @@ function fetch_telegram_channel_page($channel) {
         CURLOPT_TIMEOUT => 12,
         CURLOPT_MAXREDIRS => 2,
         CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; MemeTinder/1.0)'
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; ContentTinder/1.0)'
     ]);
 }
 

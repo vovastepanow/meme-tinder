@@ -44,9 +44,10 @@ function handle_database_change($action, $input, $debug_mode) {
 
         $count = with_file_lock($definition['file'], function () use ($action, $input, $database, $collection) {
             [$definition, $data] = database_editor_load($database);
-            $items = database_editor_collection($database, $definition, $data, $collection);
-            $items = database_editor_apply_change($action, $input, $database, $collection, $items);
+            $before = database_editor_collection($database, $definition, $data, $collection);
+            $items = database_editor_apply_change($action, $input, $database, $collection, $before);
             database_editor_save($database, $definition, $data, $collection, $items);
+            if ($database === 'content_pool') media_cache_release_removed($before, $items); // удалённые записи не держат файлы
             return count($items);
         });
         json_response(['status' => 'success', 'count' => $count]);
@@ -81,4 +82,16 @@ function database_editor_apply_change($action, $input, $database, $collection, a
         array_splice($items, $index, 1);
     }
     return $items;
+}
+
+/** Очистка всех баз: пустые пул и история, стандартный каталог источников, пустой кэш медиа. Сразу запускает поиск контента. */
+function handle_database_reset($debug_mode) {
+    if ($debug_mode) json_error('Очистка баз отключена в демо-режиме.', 403);
+    $removed_files = reset_project_data();
+    $parser_status = start_content_parser_if_needed(true);
+    json_response([
+        'status' => 'success',
+        'removed_media' => $removed_files,
+        'parser' => $parser_status
+    ]);
 }

@@ -1,4 +1,4 @@
-# Meme Tinder: наружу открыты только интерфейс (index.html, js/, css/) и API (index.php).
+# Content Tinder: наружу открыты только интерфейс (index.html, js/, css/) и API (index.php).
 # Работает, если для каталога сайта в Apache включено AllowOverride All (или хотя бы FileInfo и AuthConfig).
 
 Options -Indexes

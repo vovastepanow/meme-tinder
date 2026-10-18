@@ -15,7 +15,7 @@ function save_data($file, $data) {
     $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE);
     if ($json === false) throw new RuntimeException('Не удалось сериализовать данные в JSON.');
 
-    $temporary_file = tempnam(dirname($file), '.meme-data-');
+    $temporary_file = tempnam(dirname($file), '.content-data-');
     if ($temporary_file === false) throw new RuntimeException('Не удалось создать временный файл базы.');
 
     $written = file_put_contents($temporary_file, $json, LOCK_EX);

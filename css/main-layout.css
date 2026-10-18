@@ -1,11 +1,31 @@
-/* main-layout.css — каркас страницы, вкладки и журнал приложения. */
+/* main-layout.css — палитра, каркас страницы, вкладки и журнал приложения.
+   Интерфейс монохромный: оттенки серого и белый акцент. Цвет есть только у радужной рамки
+   активной вкладки и у сообщений об ошибках. */
+
+:root {
+    --bg: #0b0b0c;
+    --surface: #151517;
+    --surface-2: #1d1d20;
+    --surface-3: #26262a;
+    --line: #2a2a2e;
+    --line-strong: #3d3d43;
+    --text: #ececee;
+    --muted: #a0a0a8;
+    --faint: #6b6b73;
+    --accent: #f4f4f5;
+    --accent-text: #0b0b0c;
+    --danger: #f87171;
+    --rainbow: #ff4d6d, #ffb347, #f9f871, #4ade80, #38bdf8, #a78bfa, #ff4d6d;
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
 
 /* Атрибут hidden всегда прячет элемент, даже если класс задаёт ему display. */
 [hidden] { display: none !important; }
 
 body {
-    background-color: #0c0c0e;
-    color: #e4e4e7;
+    background: var(--bg);
+    color: var(--text);
     font-family: system-ui, -apple-system, sans-serif;
     margin: 0;
     padding: 20px;
@@ -15,14 +35,56 @@ body {
     min-height: 100vh;
     box-sizing: border-box;
 }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- Вкладки ---- */
 .tabs {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 12px;
+    gap: 10px;
     max-width: 100%;
     margin-bottom: 25px;
 }
+.tab-btn {
+    padding: 11px 22px;
+    border: 2px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 15px;
+    font-weight: 600;
+    transition: color 0.2s ease, border-color 0.2s ease;
+}
+.tab-btn:hover { color: var(--text); border-color: var(--line-strong); }
+
+/* Активная вкладка: переливающаяся радужная рамка (градиент крутится по кругу). */
+@property --tab-angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+}
+.tab-btn.active {
+    border-color: transparent;
+    background:
+        linear-gradient(var(--surface-2), var(--surface-2)) padding-box,
+        conic-gradient(from var(--tab-angle), var(--rainbow)) border-box;
+    color: var(--text);
+    box-shadow: 0 0 18px -6px rgba(255, 255, 255, 0.35);
+    animation: tab-rainbow-spin 3s linear infinite;
+}
+@keyframes tab-rainbow-spin {
+    to { --tab-angle: 360deg; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .tab-btn.active { animation: none; }
+}
+
+/* ---- Панели вкладок ---- */
 .view-panel {
     display: none;
     width: 100%;
@@ -31,25 +93,22 @@ body {
     align-items: center;
     transition: opacity 0.2s ease;
 }
-.view-panel.active {
-    display: flex;
-}
+.view-panel.active { display: flex; }
 /* Вкладка ждёт ответа сервера (например, сохраняет голос). */
-.view-panel.is-busy {
-    opacity: 0.3;
-    pointer-events: none;
-}
+.view-panel.is-busy { opacity: 0.3; pointer-events: none; }
+
+/* ---- Журнал приложения ---- */
 .activity-console {
     width: min(100%, 900px);
     height: 320px;
     margin: 0 0 20px;
     box-sizing: border-box;
     overflow: hidden;
-    border: 1px solid #3f4d49;
-    border-radius: 6px;
-    background: #080d0b;
-    color: #d1fae5;
-    font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #080809;
+    color: var(--text);
+    font: 12px/1.55 var(--mono);
 }
 .activity-console-header {
     display: flex;
@@ -57,104 +116,103 @@ body {
     gap: 8px;
     height: 34px;
     padding: 0 12px;
-    border-bottom: 1px solid #263832;
-    background: #101916;
-    color: #a7f3d0;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
 }
-.activity-console-header #activity-console-status {
+#activity-console-status {
     margin-left: auto;
-    color: #4ade80;
+    color: var(--muted);
     font-size: 10px;
     text-transform: uppercase;
+    letter-spacing: 0.06em;
 }
 .activity-console-follow {
     flex: 0 0 auto;
     padding: 4px 6px;
-    border: 1px solid #3f5c4e;
+    border: 1px solid var(--line-strong);
     border-radius: 4px;
-    background: #17221d;
-    color: #bbf7d0;
-    font: inherit;
+    background: var(--surface-2);
     font-size: 10px;
-    cursor: pointer;
 }
-.activity-console-follow:hover { border-color: #4ade80; }
+.activity-console-follow:hover { border-color: var(--muted); }
 .console-indicator {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #4ade80;
-    box-shadow: 0 0 8px rgba(74, 222, 128, 0.55);
+    background: var(--faint);
+}
+/* Пока идёт поиск, индикатор пульсирует. */
+.activity-console.is-active .console-indicator {
+    background: var(--accent);
+    animation: console-pulse 1.2s ease-in-out infinite;
+}
+@keyframes console-pulse {
+    50% { opacity: 0.25; }
 }
 .activity-console-output {
     height: calc(100% - 35px);
     overflow-y: auto;
     padding: 8px 12px;
     box-sizing: border-box;
-    scrollbar-color: #3f5c4e #080d0b;
+    scrollbar-color: var(--line-strong) transparent;
 }
 .activity-console-line {
     margin: 0 0 3px;
-    color: #c4d4cd;
+    color: #c8c8ce;
     overflow-wrap: anywhere;
 }
-.activity-console-line::before { content: '> '; color: #4ade80; }
+.activity-console-line::before { content: '> '; color: var(--faint); }
+
+/* Обмен с моделью: запрос, ответ и размышления — «пузыри», различаются рамкой, а не цветом. */
 .activity-console-line.ai-message {
     margin: 6px 0;
     padding: 6px 8px;
-    border-left: 3px solid #a78bfa;
+    border-left: 2px solid var(--line-strong);
     border-radius: 4px;
-    background: rgba(167, 139, 250, 0.1);
+    background: var(--surface);
     cursor: pointer;
 }
 .activity-console-line.ai-message::before { content: none; }
-.activity-console-line.ai-response {
-    border-left-color: #4ade80;
-    background: rgba(74, 222, 128, 0.08);
-}
-/* Размышления модели (поле thinking): янтарная рамка, отдельно от запроса и ответа. */
+.activity-console-line.ai-response { border-left-color: var(--accent); }
 .activity-console-line.ai-thinking {
-    border-left-color: #f59e0b;
-    background: rgba(245, 158, 11, 0.1);
+    border-left-style: dashed;
+    border-left-color: var(--muted);
+    background: transparent;
 }
+.ai-thinking .ai-message-text { color: var(--muted); font-style: italic; }
+/* Размышления, которые модель ещё пишет: показываются целиком и дописываются на лету. */
+.ai-thinking.is-live .ai-message-text { display: block; max-height: 240px; overflow-y: auto; white-space: pre-wrap; }
+.ai-thinking.is-live .ai-message-meta::after { content: ' · думает…'; }
 .ai-message-meta {
     display: block;
     margin-bottom: 2px;
-    color: #c4b5fd;
+    color: var(--faint);
     font-size: 10px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
 }
-.ai-response .ai-message-meta { color: #86efac; }
-.ai-thinking .ai-message-meta { color: #fcd34d; }
 .ai-message-text {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 4;
     overflow: hidden;
-    color: #e4e4e7;
+    color: var(--text);
 }
-/* Развёрнутое сообщение может быть длинным (размышления), поэтому внутри него включается прокрутка. */
+/* Развёрнутое сообщение может быть длинным (размышления), поэтому внутри включается прокрутка. */
 .ai-message.is-expanded .ai-message-text {
     display: block;
     max-height: 320px;
     overflow-y: auto;
     white-space: pre-wrap;
 }
-/* Видео-мем: занимает ширину карточки, без обрезки кадра. */
-#meme-video {
-    display: block;
-    width: 100%;
-    max-height: 70vh;
-    background: #000;
-    object-fit: contain;
-}
-/* Mobile: .app-main is transparent to layout, the console sits between the tabs and the content. */
+
+/* ---- Раскладка: мобильная и десктопная ---- */
+/* Mobile: .app-main прозрачен для раскладки, журнал стоит между вкладками и содержимым. */
 .app-main { display: contents; }
 .tabs { order: 0; }
 .activity-console { order: 1; }
 .app-main > :not(.tabs) { order: 2; }
-/* Desktop: console in its own sticky column so it never overlaps the tabs or the card. */
+/* Desktop: журнал в отдельной липкой колонке, не перекрывает вкладки и карточку. */
 @media (min-width: 900px) {
     body {
         display: grid;

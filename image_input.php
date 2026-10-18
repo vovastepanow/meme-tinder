@@ -57,7 +57,7 @@ function fetch_public_image($url) {
         CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
-        CURLOPT_USERAGENT => 'MemeTinder/1.0',
+        CURLOPT_USERAGENT => 'ContentTinder/1.0',
         CURLOPT_WRITEFUNCTION => function($curl, $chunk) use (&$image_data) {
             if (strlen($image_data) + strlen($chunk) > MAX_IMAGE_BYTES) return 0;
             $image_data .= $chunk;

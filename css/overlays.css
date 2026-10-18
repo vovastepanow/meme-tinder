@@ -1,4 +1,4 @@
-/* overlays.css — полноэкранный просмотр картинок и диалог редактора баз. */
+/* overlays.css — полноэкранный просмотр картинок и видео, диалог редактора баз. */
 .image-viewer {
     position: fixed;
     inset: 0;
@@ -7,7 +7,7 @@
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    background: rgba(0, 0, 0, 0.88);
+    background: rgba(0, 0, 0, 0.92);
     cursor: zoom-out;
     touch-action: none;
     user-select: none;
@@ -24,6 +24,15 @@
 }
 .image-viewer img.is-zoomed { cursor: grab; }
 .image-viewer.is-dragging img { cursor: grabbing; transition: none; }
+/* Видео в просмотрщике: обычный плеер со звуком и контролами, без зума и перетаскивания. */
+.image-viewer.is-video { cursor: default; touch-action: auto; }
+.image-viewer video {
+    display: block;
+    max-width: calc(100vw - 48px);
+    max-height: calc(100vh - 72px);
+    background: #000;
+    cursor: auto;
+}
 .image-viewer-close {
     position: absolute;
     top: 12px;
@@ -31,15 +40,13 @@
     z-index: 1;
     width: 40px;
     height: 40px;
-    border: 1px solid #3f3f46;
+    border: 1px solid var(--line-strong);
     border-radius: 50%;
-    background: rgba(24, 24, 27, 0.85);
-    color: #f4f4f5;
+    background: rgba(21, 21, 23, 0.85);
     font-size: 24px;
     line-height: 1;
-    cursor: pointer;
 }
-.image-viewer-close:hover { background: #7f1d1d; }
+.image-viewer-close:hover { border-color: var(--accent); }
 .image-viewer-hint {
     position: absolute;
     bottom: 12px;
@@ -47,37 +54,37 @@
     transform: translateX(-50%);
     padding: 4px 10px;
     border-radius: 4px;
-    background: rgba(24, 24, 27, 0.75);
-    color: #a1a1aa;
+    background: rgba(21, 21, 23, 0.75);
+    color: var(--muted);
     font-size: 12px;
     white-space: nowrap;
     pointer-events: none;
 }
 body.image-viewer-open { overflow: hidden; }
 img:not(#image-viewer-image) { cursor: zoom-in; }
+
 .database-edit-dialog {
     width: min(640px, calc(100vw - 32px));
     max-width: none;
     padding: 0;
-    border: 1px solid #3f3f46;
-    border-radius: 8px;
-    background: #18181b;
-    color: #f4f4f5;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
 }
 .database-edit-dialog::backdrop { background: rgba(0, 0, 0, 0.72); }
 .database-edit-dialog form { display: grid; gap: 12px; padding: 20px; }
 .database-edit-dialog h2 { margin: 0; font-size: 18px; }
-.database-edit-dialog label { color: #a1a1aa; font-size: 13px; }
+.database-edit-dialog label { color: var(--muted); font-size: 13px; }
 .database-edit-dialog textarea {
     width: 100%;
     min-height: 320px;
     box-sizing: border-box;
     resize: vertical;
     padding: 12px;
-    border: 1px solid #3f3f46;
+    border: 1px solid var(--line-strong);
     border-radius: 6px;
-    background: #09090b;
-    color: #e4e4e7;
-    font: 13px/1.5 ui-monospace, monospace;
+    background: var(--bg);
+    font: 13px/1.5 var(--mono);
 }
 .database-dialog-actions { justify-content: flex-end; }

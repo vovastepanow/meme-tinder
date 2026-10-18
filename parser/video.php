@@ -31,7 +31,7 @@ function download_video_temp($url, $max_bytes = VIDEO_MAX_BYTES) {
         CURLOPT_CONNECTTIMEOUT => 8,
         CURLOPT_TIMEOUT => 90,
         CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
-        CURLOPT_USERAGENT => 'MemeTinder/1.0',
+        CURLOPT_USERAGENT => 'ContentTinder/1.0',
         CURLOPT_WRITEFUNCTION => function ($curl, $chunk) use (&$size, $max_bytes, $handle) {
             $size += strlen($chunk);
             if ($size > $max_bytes) return 0; // abort: the file is too big
