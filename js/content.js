@@ -193,11 +193,25 @@ const FILTERS = { fresh_only: 'filter-fresh', active_sources_only: 'filter-activ
 export async function refreshTopicLabel() {
     try {
         const data = await api('settings');
-        $('topic-input').value = $('topic-input').dataset.saved = data.topic || '';
+        const currentTopic = data.topic || '';
+        $('topic-input').value = $('topic-input').dataset.saved = currentTopic;
         $('topic2-input').value = $('topic2-input').dataset.saved = data.topic2 || '';
         for (const [key, id] of Object.entries(FILTERS)) $(id).checked = key === 'active_sources_only' ? data.filters?.[key] !== false : Boolean(data.filters?.[key]);
+
+        // Обновляем тему в заголовке
+        const topicTabsNav = $('topic-tabs');
+        try {
+            const topics = (await api('topics')).topics || [];
+            const topicButtons = topics.slice(0, 8).map(t => {
+                const btn = el('button', { className: 'tab-btn', type: 'button', role: 'tab', textContent: t.title });
+                if (t.title === currentTopic) btn.classList.add('active');
+                btn.onclick = () => submitTopic(t.title);
+                return btn;
+            });
+            topicTabsNav.replaceChildren(...topicButtons);
+            $('topic-options').replaceChildren(...topics.map(t => el('option', { value: t.title, label: t.path })));
+        } catch { /* подсказок не будет */ }
     } catch (error) { log(`Не удалось загрузить тему поиска: ${error.message}`); }
-    try { $('topic-options').replaceChildren(...((await api('topics')).topics || []).map(t => el('option', { value: t.title, label: t.path }))); } catch { /* подсказок не будет */ }
 }
 
 /** Сохраняет тему (общий код с вкладкой «Дерево»): показывает, во что превратился ввод, и даёт возразить. Возвращает ответ сервера. */
@@ -212,6 +226,7 @@ export async function saveTopic(topic, forceNew, notice) {
     if (data.created && data.topic_info?.parent) log(`Новая тема «${data.topic}» — частная тема внутри «${data.topic_info.parent.title}».`);
     if (data.discovery) log('У темы пока мало своих источников — сначала ищу новые (поиск в Telegram, VK, на Дваче). Ход поиска — в журнале.');
     watchParser();
+    refreshTopicLabel();
     return data;
 }
 
