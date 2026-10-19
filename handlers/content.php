@@ -13,8 +13,8 @@ function pool_for_current_topic() {
     [$topic, $key, $f] = [current_topic(), search_topic_key(), content_filters()];
     $keep = fn($i) => (($i['topic'] ?? '') === '' || topic_same((string)$i['topic'], $topic) || topic_same((string)$i['topic'], $key))
         && (!$f['video_only'] || post_item_has_video($i)) && (!$f['fresh_only'] || !is_post_outdated($i['posted_at'] ?? 0, null, CONTENT_FRESH_MAX_AGE_DAYS));
-    $pool = load_data(pool_file(), []);
-    return count(array_filter($pool, $keep)) === count($pool) ? $pool : update_data(pool_file(), [], fn($p) => array_values(array_filter($p, $keep)));
+    $pool = pool_load();
+    return count(array_filter($pool, $keep)) === count($pool) ? $pool : pool_update(fn($p) => array_values(array_filter($p, $keep)));
 }
 
 function handle_parser_status() { json_response(['running' => content_parser_is_running(), 'activity' => content_parser_activity()]); }
@@ -53,7 +53,7 @@ function handle_save_topic($in) {
     if ($lacks = topic_lacks_sources(load_source_db(), $topic)) request_source_discovery();
     $parser = 'unchanged';
     if (!topic_same($topic, $previous)) {
-        update_data(pool_file(), [], fn() => []);
+        pool_update(fn() => []);
         media_cache_cleanup(all_users_pool_items());
         $parser = start_content_parser_if_needed(true);
     } elseif ($stopped) $parser = start_content_parser_if_needed(true);
@@ -67,7 +67,7 @@ function handle_save_second_topic($in) {
     if ($topic2 !== '' && topic_same($topic2, current_topic())) json_error('Вторая тема совпадает с первой.');
     if (topic_norm($topic2) === topic_norm(current_topic2())) ok(['topic2' => $topic2, 'parser' => 'unchanged']);
     save_settings(['topic2' => $topic2]);
-    update_data(pool_file(), [], fn() => []);
+    pool_update(fn() => []);
     ok(['topic2' => $topic2, 'parser' => start_content_parser_if_needed(true)]);
 }
 
@@ -99,9 +99,9 @@ function handle_vote($in) {
     if ((!isset(CONTENT_VOTE_COLLECTIONS[$vote]) && $vote !== 'postpone') || $image === '') json_error('Некорректный голос или запись');
     $reason = $vote === 'wrong' && in_array($in['reason'] ?? '', COMPLAINT_REASONS, true) ? $in['reason'] : null;
     $before = [];
-    $after = update_data(pool_file(), [], function ($pool) use ($image, $vote, $reason, &$before) {
+    $after = pool_update(function ($pool) use ($image, $vote, $reason, &$before) {
         $before = $pool;
-        return apply_vote($pool, $image, $vote, $reason, fn($record, $c) => update_data(history_file(), empty_history(), fn($h) => array_merge_recursive($h, [$c => [$record]])));
+        return apply_vote($pool, $image, $vote, $reason, fn($record, $c) => history_append($c, $record));
     });
     if (!in_array(CONTENT_VOTE_COLLECTIONS[$vote] ?? '', PROPOSAL_COLLECTIONS, true)) media_cache_release_removed($before, $after);   // лайк и «не знаю» держат файлы для «Предложки»
     ok();
@@ -150,10 +150,10 @@ function handle_proposal_hide($in) {
 /** Меняет записи «Предложки»: $change(запись) → новая запись или null (не менять). */
 function update_history_proposals(callable $change, $uid = null) {
     $changed = 0;
-    update_data(history_file($uid), empty_history(), function ($h) use ($change, &$changed) {
+    history_update(function ($h) use ($change, &$changed) {
         foreach (PROPOSAL_COLLECTIONS as $c) foreach ($h[$c] ?? [] as $i => $r) if (is_array($r) && ($new = $change($r)) !== null) { $h[$c][$i] = $new; $changed++; }
         return $changed ? $h : null;
-    });
+    }, $uid);
     return $changed;
 }
 

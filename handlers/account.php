@@ -42,7 +42,7 @@ function account_telegram_public() {
 
 /** Аккаунт Telegram для интерфейса, без секретов. */
 function telegram_user_public() {
-    $c = load_data(connections_file(), []);
+    $c = connections_load();
     [$e, $p] = [(array)($c['telegram_user'] ?? []), $c['telegram_user_pending'] ?? null];
     $pend = fn($k) => is_array($p) ? (string)($p[$k] ?? '') : '';
     return ['connected' => !empty($e['session_enc']), 'name' => (string)($e['name'] ?? ''), 'username' => (string)($e['username'] ?? ''),
@@ -64,7 +64,7 @@ function handle_account_info() {
             'http_only' => $name === USER_COOKIE || ($name === session_name() && (bool)ini_get('session.cookie_httponly'))];
     }
     if (isset($_COOKIE[session_name()])) @session_start(['read_and_close' => true]);   // только ключи: в значениях служебные секреты входа VK
-    json_response(['user_id' => app_user_id(), 'topic' => current_topic(), 'last_seen' => (int)@filemtime(user_dir() . '/last-seen'), 'pool' => count(load_data(pool_file(), [])),
+    json_response(['user_id' => app_user_id(), 'topic' => current_topic(), 'last_seen' => (int)@filemtime(user_dir() . '/last-seen'), 'pool' => count(pool_load()),
         'counts' => array_map('count', array_intersect_key($history, array_flip(HISTORY_COLLECTIONS))), 'files' => $files, 'cookies' => $cookies,
         'session_keys' => array_keys($_SESSION ?? []), 'retention_days' => USER_RETENTION_DAYS, 'exposed' => account_web_exposure(),
         'fix_command' => 'sudo sh ' . ROOT . '/tools/apache-setup.sh', 'telegram' => account_telegram_public(), 'telegram_user' => telegram_user_public()]);
@@ -166,7 +166,7 @@ function require_bot() { return telegram_connection() ?? json_error('Снача�
 
 /** Незаконченный вход: [запрос к помощнику с ключами и сессией, данные входа]. */
 function telegram_user_pending() {
-    $p = load_data(connections_file(), [])['telegram_user_pending'] ?? null;
+    $p = connections_load()['telegram_user_pending'] ?? null;
     if (!is_array($p) || time() - (int)($p['at'] ?? 0) > TELEGRAM_USER_PENDING_TTL) json_error('Код устарел: запросите новый.', 409);
     [$hash, $session] = [secret_decrypt($p['api_hash_enc']), secret_decrypt($p['session_enc'])];
     if ($hash === null || $session === null) json_error('Не удалось прочитать сохранённые данные: запросите код заново.', 409);
@@ -236,7 +236,7 @@ function handle_telegram_user_qr_start($in) {
 
 /** Состояние входа по QR: waiting (+ svg), needs_password, success, busy, expired, error, none. */
 function handle_telegram_user_qr_status() {
-    $c = load_data(connections_file(), []);
+    $c = connections_load();
     if (telegram_user_connection() !== null) ok(['telegram_user' => telegram_user_public()]);
     $qr = $c['telegram_user_qr'] ?? null;
     $file = telegram_user_qr_state_file();
