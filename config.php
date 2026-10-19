@@ -1,221 +1,149 @@
 <?php
-
-// Общие настройки приложения. Секреты и значения, специфичные для сервера, задаются
-// в config.local.php (он не отслеживается git). Шаблон: config.local.example.php.
-$local_config = is_file(__DIR__ . '/config.local.php') ? (require __DIR__ . '/config.local.php') : [];
-$local_config = is_array($local_config) ? $local_config : [];
-
-// ---- VK ID (вход для подбора пабликов) ----
-// VK_CLIENT_ID — ID приложения из кабинета VK ID.
-// VK_REDIRECT_URI — ровно такой же адрес, как в настройках приложения VK ID, например:
-//   https://ВАШ_ДОМЕН/index.php?action=vk_oauth_callback
-$vk_settings = [
-    'VK_CLIENT_ID' => $local_config['VK_CLIENT_ID'] ?? '',
-    'VK_REDIRECT_URI' => $local_config['VK_REDIRECT_URI'] ?? '',
-    'VK_SERVICE_TOKEN' => $local_config['VK_SERVICE_TOKEN'] ?? '',
-    'VK_OAUTH_SCOPE' => $local_config['VK_OAUTH_SCOPE'] ?? '',
-];
-// Значения попадают в окружение процесса, чтобы vk_oauth_config() и фоновый парсер видели их.
-foreach ($vk_settings as $name => $value) {
-    if (getenv($name) === false || getenv($name) === '') putenv($name . '=' . $value);
+// Настройки. Секреты сервера — в config.local.php (не в git), шаблон: config.local.example.php.
+$local = is_file(__DIR__ . '/config.local.php') ? (require __DIR__ . '/config.local.php') : [];
+foreach (['VK_CLIENT_ID', 'VK_REDIRECT_URI', 'VK_SERVICE_TOKEN', 'VK_OAUTH_SCOPE'] as $name) {
+    if ((string)getenv($name) === '') putenv($name . '=' . (is_array($local) ? ($local[$name] ?? '') : ''));
 }
 
 const APP_NAME = 'Postmaker';
+const ROOT = __DIR__;
 
-// ---- Файлы данных (создаются приложением, в git не попадают) ----
-const SOURCES_FILE = __DIR__ . '/sources_db.json';        // каталог источников и решения по ним
-// Данные каждого пользователя (пул, история оценок, тема поиска, журнал и сессия парсера) лежат в users/<id>/ —
-// см. lib/users.php. Общие для всех: каталог источников, кэш быстрой оценки, кэш анализа, кэш медиа.
-const USERS_DIR = __DIR__ . '/users';
+// ---- Данные ----
+const SOURCES_FILE = ROOT . '/sources_db.json';           // общий каталог источников и реестр тем
+const USERS_DIR = ROOT . '/users';                        // users/<id>/: пул, история, настройки, журнал парсера
 const USER_COOKIE = 'ct_uid';
 const USER_COOKIE_DAYS = 365;
-const USER_RETENTION_DAYS = 60;          // данные пользователя, не заходившего дольше, удаляются
-const MAX_PARALLEL_PARSERS = 2;          // одновременных сборщиков контента; остальные ждут в очереди
-const ANALYSIS_CACHE_FILE = __DIR__ . '/analysis_cache.json';  // результат полного анализа: общий для всех пользователей одной темы
+const USER_RETENTION_DAYS = 60;                           // профили без заходов дольше удаляются
+const MAX_PARALLEL_PARSERS = 2;
+const ANALYSIS_CACHE_FILE = ROOT . '/analysis_cache.json'; // полный анализ, общий для всех пользователей темы
 const ANALYSIS_CACHE_LIMIT = 2000;
 const ANALYSIS_CACHE_DAYS = 14;
-const PARSER_SCRIPT = __DIR__ . '/cron_parser.php';
-
-// Тема поиска по умолчанию. Меняется в интерфейсе (вкладка «Подбор») и хранится в settings.json.
+const SCREENED_CACHE_FILE = ROOT . '/screened_cache.json'; // быстрые оценки картинок по темам
+const SCREENED_CACHE_LIMIT = 5000;
+const SCREENED_CACHE_DAYS = 14;
+const PARSER_SCRIPT = ROOT . '/cron_parser.php';
+const PARSER_RUNTIME_VERSION = 'v3';                      // входит в имена журнала и состояния парсера
+const MEDIA_CACHE_DIR = ROOT . '/media_cache';
+const MEDIA_CACHE_URL = 'media_cache';
+const MEDIA_CACHE_GRACE_SECONDS = 600;                    // свежие файлы кэша не трогаем: парсер мог ещё не записать запись
 const DEFAULT_TOPIC = 'мемы и юмор';
 const TOPIC_MAX_LENGTH = 200;
+const DAY_SECONDS = 86400;
 
-// Кэш медиа: картинки (и видео) отобранного контента сохраняются здесь в момент отбора, потому что ссылки
-// источников (особенно CDN Telegram) со временем перестают работать. Файл удаляется, как только запись уходит из пула.
-const MEDIA_CACHE_DIR = __DIR__ . '/media_cache';
-const MEDIA_CACHE_URL = 'media_cache';
-const MEDIA_CACHE_GRACE_SECONDS = 600; // свежие файлы не трогаем: парсер мог сохранить файл, но ещё не добавить запись в пул
-
-// ---- Модели ----
-// Скорость упирается в то, помещается ли модель в видеопамять. Если нет, Ollama считает на процессоре
-// (у 9B-модели это ~5 токенов в секунду против 30–60 на видеокарте).
-//  - ANALYSIS_MODEL — полный анализ отобранных кандидатов (описание, оценка по теме и по вкусу).
-//  - Быстрая предоценка берёт первую установленную модель из PRESCREEN_MODELS: маленькая модель, которая
-//    помещается в видеопамять, оценивает картинку за секунду-две. Нет ни одной — используется ANALYSIS_MODEL.
-//    Для видеокарты на 3–4 ГБ: ollama pull qwen3-vl:2b
+// ---- Модели (Ollama) ----
 const OLLAMA_URL = 'http://localhost:11434';
 const OLLAMA_GENERATE_URL = OLLAMA_URL . '/api/generate';
 const VISION_MODEL = 'qwen3.5-vision:latest';
-const ANALYSIS_MODEL = VISION_MODEL;
-// Умная модель для задач «раз на тему», где важно качество, а не скорость: поисковые запросы автоподбора источников.
-// Всегда основная модель (даже когда анализ записей временно перешёл на быструю, см. analysis_model()).
-const SMART_MODEL = VISION_MODEL;
-// Если основная модель MAIN_MODEL_SLOW_TIMEOUTS раз подряд не уложилась в таймаут за один запуск сборщика, на MAIN_MODEL_SLOW_HOURS часов анализ идёт быстрой моделью (см. analysis_model()).
-const MAIN_MODEL_SLOW_TIMEOUTS = 3;
+const ANALYSIS_MODEL = VISION_MODEL;                      // полный анализ отобранных
+const SMART_MODEL = VISION_MODEL;                         // задачи «раз на тему»: профиль, классификация
+const PRESCREEN_MODELS = ['qwen3-vl:2b-instruct', 'qwen3-vl:2b', 'qwen2.5vl:3b']; // быстрая оценка: первая установленная
+const MAIN_MODEL_SLOW_TIMEOUTS = 3;                       // столько таймаутов основной подряд — анализ на быструю модель
 const MAIN_MODEL_SLOW_HOURS = 6;
-const MAIN_MODEL_SLOW_FLAG = __DIR__ . '/users/.main-model-slow';
-// Instruct-вариант не размышляет и отвечает надёжнее thinking-версии, поэтому идёт первым, если установлен.
-const PRESCREEN_MODELS = ['qwen3-vl:2b-instruct', 'qwen3-vl:2b', 'qwen2.5vl:3b'];
-// Один размер контекста для всех запросов: при смене num_ctx Ollama перезагружает модель. 4096 хватает
-// на промпт, картинки и ответ без размышлений и занимает вдвое меньше памяти, чем 8192.
-const OLLAMA_NUM_CTX = 4096;
-// Сколько слоёв модели держать на видеокарте. null — Ollama решает сама. Применяется только к малым моделям из PRESCREEN_MODELS.
-// Для qwen3-vl:2b-instruct на GTX 1060 3GB (Ollama 0.40) проверено: любое число меньше всех слоёв (например, 28) заставляет Ollama
-// считать обработчик картинок на процессоре — 13–14 с на картинку при простаивающей видеокарте; 99 (все слои) не помещается вместе
-// с обработчиком картинок и обрушивает модель. null: обработчик картинок на видеокарте, 6–9 слоёв там же — 3.5–4 с на картинку.
-const OLLAMA_NUM_GPU = null;
-const NUM_GPU_FAILED_FLAG = __DIR__ . '/users/.num-gpu-failed-v2';   // создаётся, если num_gpu обрушил модель; удалите файл, чтобы попробовать снова
-const OLLAMA_KEEP_ALIVE = '30m';     // держать модель загруженной между запросами парсера
-
-// Модели, у которых включаем размышления. Ответ таких моделей идёт потоком, и размышления появляются в журнале
-// сайта по мере генерации. Для них не передаётся format=json: ограничение формата заставляет модель сразу писать
-// JSON и полностью отключает размышления (JSON разбирается из текста ответа после размышлений).
-// Для моделей без поддержки thinking оставьте список пустым.
+const MAIN_MODEL_SLOW_FLAG = USERS_DIR . '/.main-model-slow';
+const OLLAMA_NUM_CTX = 4096;                              // один контекст для всех запросов: смена num_ctx перезагружает модель
+const OLLAMA_KEEP_ALIVE = '30m';
 const OLLAMA_THINKING_MODELS = [VISION_MODEL];
-// Лимит токенов на размышления и ответ. Если модель не уложилась, запись переоценивается без размышлений.
 const OLLAMA_THINKING_MAX_TOKENS = 1500;
-// Размышления в фоновом парсере: в 5–10 раз больше токенов на каждый анализ. На процессоре это минуты на запись,
-// поэтому по умолчанию выключены (ответ модели всё равно виден в журнале). Включайте, если модель на видеокарте.
-// На вкладке «Тест ИИ» размышления включены всегда — там вы смотрите на один анализ.
-const PARSER_THINKING = false;
-const ANALYSIS_MAX_TOKENS = 450;    // JSON по схеме: два числа и две короткие фразы
-// Персональный подбор: модель прогнозирует, понравится ли запись пользователю (rating), по примерам его лайков и дизлайков,
-// и пул сортируется по прогнозу. Временно выключен: прогноз почти не совпадал с голосами (AUC 0.60), а примеры удлиняют промпт.
-// Выключено — модель оценивает только соответствие теме, пул сортируется по нему, прогноз на карточке не показывается.
-const PERSONAL_TASTE_ENABLED = false;
-// Примеры вкуса в промпте анализа: сколько последних оценок каждого вида и сколько символов от каждой (иначе промпт не влезает в контекст).
-// Примеры стоят в начале промпта, до картинки и подписи: Ollama кэширует совпадающее начало, и между голосами они почти бесплатны.
+const OLLAMA_TIMEOUT = 180;
+const OLLAMA_THINKING_TIMEOUT = 420;
+const PARSER_THINKING = false;                            // размышления в парсере — в разы дольше; во «Тесте ИИ» включены всегда
+const ANALYSIS_MAX_TOKENS = 450;
+const PERSONAL_TASTE_ENABLED = false;                     // прогноз вкуса по прошлым голосам (выключен: AUC 0.60)
 const TASTE_EXAMPLES = 10;
-const TASTE_EXAMPLE_CHARS = 140;     // ответ без размышлений — короткий JSON
-const ANALYSIS_IMAGE_MAX_SIDE = 768; // основная модель (Qwen3.5): 768 px ≈ 350 токенов, мелкий текст мема ещё читается
-const FIXED_COST_IMAGE_MAX_SIDE = 1024; // малые qwen3-vl (PRESCREEN_MODELS) приводят любую картинку к ~1040 токенам: размер не удорожает
+const TASTE_EXAMPLE_CHARS = 140;
+const ANALYSIS_IMAGE_MAX_SIDE = 768;
+const FIXED_COST_IMAGE_MAX_SIDE = 1024;                   // малые qwen3-vl берут ~1040 токенов за картинку любого размера
 
-// ---- Парсер: сколько контента держать в пуле и сколько работы делать за один запуск ----
-const CONTENT_POOL_TARGET = 40;        // пул перестаёт пополняться, когда в нём столько записей
-const CONTENT_ADDED_PER_RUN = 30;      // максимум новых записей за один запуск
-const CONTENT_ANALYZE_PER_RUN = 80;    // максимум кандидатов, которые уйдут в модель за один запуск
-const PARSER_MAX_SECONDS = 2400;       // жёсткий лимит времени одного запуска (40 минут)
-const PARSER_COOLDOWN_SECONDS = 600;   // автозапуск парсера не чаще одного раза за этот срок
-
-// Отбор: запись попадает в пул, если модель оценила её соответствие теме не ниже этого порога (0–100).
-// Модель ставит оценки ступенями 60/75/85/95; «60» (слабо по теме) получили 15 из 39 жалоб и лишь 1 из 22 лайков.
-const RELEVANCE_THRESHOLD = 61;
-
-// Быстрая предварительная оценка: перед долгим анализом (с размышлениями и раскадровкой) каждый кандидат
-// оценивается по уменьшенной картинке (у видео — по обложке) без размышлений, ответом из одного числа.
-// На полный анализ уходят только кандидаты с оценкой не ниже PRESCREEN_THRESHOLD, лучшие — первыми.
-// Размер: для qwen3-vl Ollama растягивает любую картинку минимум до ~1024×1024 (--image-min-tokens 1024), так что на скорость
-// уменьшение не влияет — ~1100 токенов на запрос; меньший размер лишь экономит передачу и декодирование картинки.
-const PRESCREEN_ENABLED = true;
-const PRESCREEN_MAX_SIDE = 768;    // qwen3-vl в Ollama приводит любую картинку к ~1040 токенам: 768 px стоят столько же, сколько 320 px, но мелкий текст читается
-const PRESCREEN_THRESHOLD = 40;   // мягкий порог: лучше лишний раз проанализировать, чем потерять годное
-const PRESCREEN_BATCH = 10;       // кандидатов в пачке: быстрая оценка пачки → полный анализ лучших из неё
-// Источник, у которого за запуск PRESCREEN_SOURCE_MISS_LIMIT быстрых оценок подряд не прошли порог,
-// до конца запуска пропускается: так не тратится время на канал или доску не по теме.
-const PRESCREEN_SOURCE_MISS_LIMIT = 6;
-// Порог не прошла ни одна запись запуска — быстрая модель не поняла тему: на полный анализ идут PRESCREEN_RELATIVE_PICK лучших
-// из каждой пачки (если у них хотя бы PRESCREEN_RELATIVE_FLOOR), пока что-нибудь не пройдёт порог само.
-const PRESCREEN_RELATIVE_PICK = 2;
+// ---- Парсер ----
+const CONTENT_POOL_TARGET = 40;
+const CONTENT_ADDED_PER_RUN = 30;
+const CONTENT_ANALYZE_PER_RUN = 80;
+const PARSER_MAX_SECONDS = 2400;
+const PARSER_COOLDOWN_SECONDS = 600;
+const RELEVANCE_THRESHOLD = 61;                           // порог «по теме» для попадания в пул
+const PRESCREEN_MAX_SIDE = 768;
+const PRESCREEN_THRESHOLD = 40;
+const PRESCREEN_BATCH = 10;
+const PRESCREEN_SOURCE_MISS_LIMIT = 6;                    // промахов подряд — источник пропускается до конца запуска
+const PRESCREEN_RELATIVE_PICK = 2;                        // не прошёл никто: лучшие из пачки всё равно идут на анализ
 const PRESCREEN_RELATIVE_FLOOR = 10;
-// Уже оценённые картинки (и прошедшие, и отсеянные) запоминаются и в следующих запусках по той же теме
-// не оцениваются заново.
-const SCREENED_CACHE_FILE = __DIR__ . '/screened_cache.json';
-const SCREENED_CACHE_LIMIT = 5000;
-const SCREENED_CACHE_DAYS = 14;
 
-// ---- Автоподбор источников по теме ----
-// Нейросеть придумывает поисковые запросы (для VK, нужен подключённый аккаунт) и вероятные адреса Telegram-каналов,
-// а также ищутся каналы, на которые ссылаются уже известные. Каждый найденный источник проверяется: есть ли
-// посты с картинками, и насколько они подходят под тему (быстрая оценка 3 картинок + название и описание).
+// ---- Автоподбор источников ----
 const SOURCE_DISCOVERY_ENABLED = true;
-const SOURCE_DISCOVERY_INTERVAL = 12 * 3600;  // повторный автоподбор по той же теме не чаще, чем раз в 12 часов
-const SOURCE_DISCOVERY_MAX_SECONDS = 900;     // лимит времени одного подбора (15 минут), потом — сбор контента
-const SOURCE_DISCOVERY_MAX_CHECKS = 40;       // сколько найденных источников проверить за один подбор
-const SOURCE_AUTO_ADD_SCORE = 101;            // автодобавление выключено (выше 100): находки приходят на вкладку «Источники» по одной, решает пользователь; 65 вернёт прежнее поведение
-const SOURCE_SUGGEST_SCORE = 55;              // с такой — попадает в предложения на вкладке «Источники»
-const SOURCE_SAMPLE_IMAGES = 6;               // сколько картинок источника оценивать (после проверки названия): по одной картинке оценка шумная,
-                                              // у мемных каналов отдельные картинки получают от 0 до 100, у посторонних — от 6 до 97
-const SOURCE_EARLY_REJECT_AFTER = 3;          // если после стольких картинок средняя оценка ниже порога — остальные не считаем
+const SOURCE_DISCOVERY_INTERVAL = 12 * 3600;
+const SOURCE_DISCOVERY_MAX_SECONDS = 900;
+const SOURCE_DISCOVERY_MAX_CHECKS = 40;
+const SOURCE_AUTO_ADD_SCORE = 101;                        // >100: автодобавление выключено, всё решает пользователь
+const SOURCE_SUGGEST_SCORE = 55;
+const SOURCE_SAMPLE_IMAGES = 6;
+const SOURCE_EARLY_REJECT_AFTER = 3;
 const SOURCE_EARLY_REJECT_SCORE = 45;
-const SOURCE_TEXT_WEIGHT = 0.15;              // вес оценки названия и описания в «по теме»: слабой моделью она почти всегда завышена
-const DVACH_BOARDS_PER_TOPIC = 4;             // сколько досок Двача нейросеть выбирает под тему
-const DVACH_BOARDS_PER_RUN = 20;              // длинный список досок обходится порциями: столько досок за один запуск сборщика
+const SOURCE_TEXT_WEIGHT = 0.15;
+const DVACH_BOARDS_PER_TOPIC = 4;
+const DVACH_BOARDS_PER_RUN = 20;
+const DISCOVERY_CHECKED_LIMIT = 1000;
+const DISCOVERY_SNOWBALL_SEEDS = 8;
+const DISCOVERY_TEXT_REJECT_SCORE = 20;
+const DISCOVERY_MIN_SUBSCRIBERS = 30;
+const DISCOVERY_MIN_OWN_SOURCES = 3;
+const DISCOVERY_SHORTAGE_INTERVAL = 1800;
 
-// ---- Свежесть контента и активность источников ----
-// Посты старше CONTENT_MAX_AGE_DAYS в кандидаты не попадают.
-// Канал или паблик замораживается, если последний пост старше SOURCE_STALE_DAYS или он публикует реже
-// SOURCE_MIN_POSTS_PER_WEEK раз в неделю. Замороженный источник парсер пропускает и раз в
-// SOURCE_FROZEN_RECHECK_DAYS дней проверяет снова: если источник ожил, он размораживается.
+// ---- Свежесть, активность и качество источников ----
 const CONTENT_MAX_AGE_DAYS = 30;
-const CONTENT_FRESH_MAX_AGE_DAYS = 1;   // «Только новый контент» (вкладка «Подбор»): посты за последние сутки
-const DVACH_THREAD_ALIVE_HOURS = 24;    // «Только актуальные источники»: живой тред — в него писали за последние сутки
-const DVACH_MAX_AGE_DAYS = 120;   // на досках посты живут дольше, чем в лентах каналов, а мемы не стареют так быстро
+const CONTENT_FRESH_MAX_AGE_DAYS = 1;                     // «Только новый контент»
+const DVACH_THREAD_ALIVE_HOURS = 24;                      // «Только актуальные источники»
+const DVACH_MAX_AGE_DAYS = 120;
 const SOURCE_STALE_DAYS = 14;
 const SOURCE_MIN_POSTS_PER_WEEK = 2;
 const SOURCE_FROZEN_RECHECK_DAYS = 3;
-
-// ---- Качество источника: подписчики и доля просмотров (lib/source_quality.php) ----
-// Итоговая оценка источника = «по теме» (картинки и описание) + размер аудитории + доля просмотров. Вес — доли от 1.
-// Если подписчиков или просмотров узнать нельзя, берётся нейтральная оценка (как у канала на ~1K и ~7% просмотров):
-// неизвестное не должно обгонять известное.
-const SOURCE_WEIGHT_CONTENT = 0.45;
-const SOURCE_WEIGHT_AUDIENCE = 0.25;       // чем больше подписчиков, тем лучше (шкала логарифмическая: 1K → 30, 10K → 65, 100K → 90)
-const SOURCE_WEIGHT_VIEW_RATE = 0.30;      // доля подписчиков, которые видят пост (просмотры ÷ подписчики): 10% → 45, 25% → 80
-// Источник «не по теме» (оценка по теме ниже порога) аудитория не вытягивает и в предложения не попадает: большой канал про другое не нужен.
-const SOURCE_MIN_CONTENT_SCORE = 68;          // на замере 18 каналов: мемные — в среднем 78 (66–92), посторонние — 60 (43–80)
+const SOURCE_WEIGHT_CONTENT = 0.45;                       // итог = по теме + аудитория + доля просмотров
+const SOURCE_WEIGHT_AUDIENCE = 0.25;
+const SOURCE_WEIGHT_VIEW_RATE = 0.30;
+const SOURCE_MIN_CONTENT_SCORE = 68;
 const SOURCE_UNKNOWN_AUDIENCE_SCORE = 30;
 const SOURCE_UNKNOWN_VIEW_RATE_SCORE = 40;
-// Мёртвая аудитория: пост видят меньше SOURCE_DEAD_VIEW_RATE подписчиков (накрутка, боты, брошенный канал). Для каналов
-// меньше SOURCE_MIN_SUBSCRIBERS_FOR_RATE доля просмотров слишком шумная и не используется.
 const SOURCE_DEAD_VIEW_RATE = 0.015;
 const SOURCE_MIN_SUBSCRIBERS_FOR_RATE = 300;
-const DVACH_THREAD_MIN_POSTS = 5;          // в треде меньше постов — он «пустой», как источник не годится
-const POOL_LIVENESS_INTERVAL = 7200;         // как часто проверять, живы ли треды записей пула (секунды)
-const POOL_LIVENESS_MAX_THREADS = 40;      // сколько тредов проверять за один проход
-
-// Источники: сколько постов брать с каждой площадки.
+const SOURCE_FEEDBACK_MIN_VOTES = 3;
+const SOURCE_FEEDBACK_BAN_VOTES = 8;
+const SOURCE_FEEDBACK_BAN_SCORE = 0.2;
+const DVACH_THREAD_MIN_POSTS = 5;
+const POOL_LIVENESS_INTERVAL = 7200;
+const POOL_LIVENESS_MAX_THREADS = 40;
 const DVACH_THREADS_PER_BOARD = 8;
-const DVACH_THREAD_TITLE_MAX = 36;          // название треда в журнале и карточках: до стольких символов, дальше «…»
+const DVACH_THREAD_TITLE_MAX = 36;
 const DVACH_POSTS_PER_THREAD = 60;
 const TELEGRAM_POSTS_PER_CHANNEL = 40;
 const VK_POSTS_PER_PUBLIC = 60;
 
-// Видео: Ollama принимает только картинки, поэтому ролик уходит в модель раскадровкой с метками времени.
-// Кадров — примерно один в VIDEO_SECONDS_PER_FRAME секунд, но не меньше MIN и не больше MAX.
-// Кадры уменьшаются до VIDEO_FRAME_MAX_SIDE по длинной стороне и идут в модель листами по 4 (storyboard_sheets):
-// 4–8 кадров хватает, чтобы понять сюжет ролика. Нужен ffmpeg.
+// ---- Видео ----
 const VIDEO_MAX_BYTES = 30 * 1024 * 1024;
 const VIDEO_FRAMES_MIN = 4;
 const VIDEO_FRAMES_MAX = 8;
 const VIDEO_SECONDS_PER_FRAME = 3.0;
 const VIDEO_FRAME_MAX_SIDE = 384;
-const STORYBOARD_FRAMES_PER_SHEET = 4;   // кадры видео идут в модель листами 2×2: любая картинка стоит ~1040 токенов, лист из 4 кадров — столько же
+const STORYBOARD_FRAMES_PER_SHEET = 4;                    // кадры уходят в модель листами 2×2
+const VIDEO_LIGHT_BYTES = 6 * 1024 * 1024;                // тяжелее — пережимается для браузера
+const VIDEO_LIGHT_HEIGHT = 720;
 
-// История оценок: коллекции и причины жалоб.
+// ---- История и публикация ----
 const HISTORY_COLLECTIONS = ['liked', 'disliked', 'undecided', 'complaints'];
-const PROPOSALS_LIMIT = 200;   // сколько записей показывает вкладка «Предложка»
+const PROPOSAL_COLLECTIONS = ['liked', 'undecided'];      // «Предложка»
+const CONTENT_VOTE_COLLECTIONS = ['like' => 'liked', 'dislike' => 'disliked', 'maybe' => 'undecided', 'wrong' => 'complaints'];
 const COMPLAINT_REASONS = ['match_error', 'broken', 'other'];
+const PROPOSALS_LIMIT = 200;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-
-function empty_history() {
-    return array_fill_keys(HISTORY_COLLECTIONS, []);
-}
-
-// PARSER_RUNTIME_VERSION входит в имя файлов лога и состояния. Меняйте его при смене пайплайна,
-// чтобы старые логи не попадали в консоль после обновления.
-const PARSER_RUNTIME_VERSION = 'v3';
-
-/** Файл состояния парсера текущего пользователя (журнал .log, состояние .json, сессия вкладки .session). */
-function parser_runtime_file($suffix) {
-    return user_dir() . '/parser-' . PARSER_RUNTIME_VERSION . $suffix;
-}
+const TELEGRAM_MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+const TELEGRAM_MAX_MEDIA = 10;
+const TELEGRAM_CAPTION_LIMIT = 1024;
+const TELEGRAM_TEXT_LIMIT = 4096;
+const TELEGRAM_MIN_DELAY_SECONDS = 60;
+const TELEGRAM_MAX_DELAY_DAYS = 365;
+const TELEGRAM_PUBLISHED_LOG_LIMIT = 30;
+const TELEGRAM_UPLOAD_MAX_BYTES = 64 * 1024 * 1024;
+const TELEGRAM_LIMIT_DEFAULTS = ['bot' => 50 * 1024 * 1024, 'account' => 2000 * 1024 * 1024];
+const TELEGRAM_LIMITS_FILE = ROOT . '/telegram_limits.json';
+const TELEGRAM_APP_KEYS_FILE = ROOT . '/telegram_app.json';
+const TELEGRAM_USER_PYTHON = '/usr/bin/python3';
+const TELEGRAM_USER_TIMEOUT = 300;
+const TELEGRAM_USER_PENDING_TTL = 900;

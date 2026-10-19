@@ -1,28 +1,19 @@
-# Postmaker: наружу открыты только интерфейс (index.html, js/, css/, fonts/, img/) и API (index.php).
-# Работает, если для каталога сайта в Apache включено AllowOverride All (или хотя бы FileInfo и AuthConfig).
-
+# Наружу открыты только интерфейс (index.html, js/, css/, fonts/, img/, media_cache/) и API (index.php).
+# Нужен AllowOverride All для каталога сайта (sudo sh tools/apache-setup.sh).
 Options -Indexes
 
-# Данные, журналы, состояние парсера, блокировки, секреты и служебные файлы.
-<FilesMatch "(^\.|\.(json|log|lock|md|backup)$|^config\.local)">
-    Require all denied
-</FilesMatch>
-
-# Служебные PHP-файлы: всё, кроме index.php, подключается изнутри и не должно вызываться напрямую.
-<FilesMatch "\.php$">
+# Данные, журналы, блокировки, секреты и служебные файлы; все PHP, кроме index.php
+<FilesMatch "(^\.|\.(json|log|lock|md|backup|php)$)">
     Require all denied
 </FilesMatch>
 <Files "index.php">
     Require all granted
 </Files>
-
 <IfModule mod_alias.c>
-    RedirectMatch 404 ^/(.*/)?(lib|handlers|parser|sources|\.git)(/|$)
+    RedirectMatch 404 ^/(.*/)?(lib|handlers|tools|users|\.git)(/|$)
 </IfModule>
 
-# Интерфейс меняется вместе с кодом: браузер каждый раз сверяет версию (ETag) и не держит старые JS/CSS.
-# Файлы кэша медиа (media_cache/) неизменяемы — имя это хэш исходного адреса: браузер хранит их неделю и не перепроверяет,
-# поэтому пролистанные и предзагруженные карточки на медленном интернете не качаются заново.
+# JS/CSS/HTML браузер каждый раз сверяет (ETag); файлы кэша медиа неизменяемы (имя — хэш адреса) и хранятся неделю
 <IfModule mod_headers.c>
     <FilesMatch "\.(js|css|html)$">
         Header set Cache-Control "no-cache"
@@ -32,7 +23,7 @@ Options -Indexes
     </If>
 </IfModule>
 
-# Редактор поста загружает на сервер видео и картинки перед отправкой в Telegram (до 50 МБ на файл, до 10 файлов в альбоме).
+# Редактор поста загружает видео и картинки перед отправкой в Telegram
 <IfModule mod_php.c>
     php_value upload_max_filesize 64M
     php_value post_max_size 400M

@@ -1,523 +1,395 @@
-// account.js — личный кабинет: профиль, подключение соцсетей (VK для всего сайта, Telegram — свой канал),
-// «Мои данные и куки» (что сайт хранит о вас: куки, хранилище браузера, файлы на сервере) и раздел «Базы данных».
-import { $, DEBUG_MODE, api, apiUrl, el, log, onTabOpen, pluralRu, switchTab } from './core.js';
+// account.js — личный кабинет: профиль, соцсети (VK на весь сайт, бот и аккаунт Telegram), «Мои данные и куки», базы данных.
+import { $, DEBUG_MODE, api, apiUrl, el, log, onTabOpen, pluralRu, switchTab, watchParser, safeSourcePostUrl } from './core.js';
 
-const VK_REDIRECT_MESSAGES = {
-    connected: 'VK подключён.',
-    misconfigured: 'Настройте VK_CLIENT_ID и VK_REDIRECT_URI на сервере.',
-    error: 'Не удалось подключить VK. Проверьте настройки OAuth и журнал PHP.'
-};
-const COLLECTION_LABELS = { liked: 'Нравится', disliked: 'Не нравится', undecided: 'Не знаю', complaints: 'Жалобы' };
-
-let currentSection = 'profile';
-let pendingVkRedirectMessage = '';   // итог входа через VK ID показывается вместо обычного статуса
-const sectionHandlers = {};
-
-// ---- Разделы ----
-
-/** Другие модули (например, database.js) подписываются на открытие своего раздела. */
-export function onAccountSection(name, handler) {
-    sectionHandlers[name] = handler;
-}
+const VK_MESSAGES = { connected: 'VK подключён.', misconfigured: 'Настройте VK_CLIENT_ID и VK_REDIRECT_URI на сервере.', error: 'Не удалось подключить VK. Проверьте настройки OAuth и журнал PHP.' };
+const COLLECTIONS = { liked: 'Нравится', disliked: 'Не нравится', undecided: 'Не знаю', complaints: 'Жалобы' };
+const sections = {};
+let current = 'profile';
+let vkMessage = '';
+let qrTimer = 0;
 
 export function openAccountSection(name) {
-    if (!$('account-tab').classList.contains('active')) {
-        currentSection = name;
-        switchTab('account-tab');   // switchTab сам вызовет показ текущего раздела
-        return;
-    }
-    currentSection = name;
-    document.querySelectorAll('.account-nav [data-account-section]').forEach(button => {
-        button.classList.toggle('is-active', button.dataset.accountSection === name);
-    });
-    document.querySelectorAll('.account-section').forEach(section => { section.hidden = section.dataset.section !== name; });
-    sectionHandlers[name]?.();
+    current = name;
+    if (!$('account-tab').classList.contains('active')) return switchTab('account-tab');   // покажет текущий раздел сама
+    document.querySelectorAll('[data-account-section]').forEach(b => b.classList.toggle('is-active', b.dataset.accountSection === name));
+    document.querySelectorAll('.account-section').forEach(s => { s.hidden = s.dataset.section !== name; });
+    sections[name]?.();
 }
 
-// ---- Форматирование ----
+const formatBytes = b => (b < 1024 ? `${b} Б` : b < 1048576 ? `${(b / 1024).toFixed(1)} КБ` : `${(b / 1048576).toFixed(1)} МБ`);
+const formatDate = s => (s ? new Date(s * 1000).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : '—');
+const files = n => `${n} ${pluralRu(n, 'файл', 'файла', 'файлов')}`;
+const status = (id, text) => { $(id).textContent = text; };
 
-function formatBytes(bytes) {
-    if (bytes < 1024) return `${bytes} Б`;
-    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} КБ`;
-    return `${(bytes / 1048576).toFixed(1)} МБ`;
-}
-
-function formatDate(seconds) {
-    if (!seconds) return '—';
-    return new Date(seconds * 1000).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
-}
-
-/** Значение, скрытое до клика: начало…конец, по клику — целиком. */
+/** Длинное значение скрыто до клика: начало…конец. */
 function revealable(value) {
     const text = String(value);
-    const short = text.length > 14 ? `${text.slice(0, 6)}…${text.slice(-4)}` : text;
-    const span = el('button', { type: 'button', className: 'privacy-value', textContent: short, title: 'Показать целиком' });
-    span.addEventListener('click', () => {
-        const full = span.textContent === short;
-        span.textContent = full ? text : short;
-        span.title = full ? 'Скрыть' : 'Показать целиком';
-    });
-    return text.length > 14 ? span : el('code', { className: 'privacy-value', textContent: text || '(пусто)' });
+    if (text.length <= 14) return el('code', { className: 'privacy-value', textContent: text || '(пусто)' });
+    const short = `${text.slice(0, 6)}…${text.slice(-4)}`;
+    const b = el('button', { type: 'button', className: 'privacy-value', textContent: short, title: 'Показать целиком' });
+    b.onclick = () => { const full = b.textContent === short; b.textContent = full ? text : short; b.title = full ? 'Скрыть' : 'Показать целиком'; };
+    return b;
 }
 
-function table(headers, rows, emptyText) {
-    if (!rows.length) return el('p', { className: 'account-muted', textContent: emptyText });
-    return el('table', { className: 'privacy-table' },
-        el('thead', {}, el('tr', {}, ...headers.map(header => el('th', { textContent: header })))),
-        el('tbody', {}, ...rows.map(cells => el('tr', {}, ...cells.map(cell => el('td', {}, cell))))));
+const table = (headers, rows, empty) => rows.length ? el('table', { className: 'privacy-table' }, el('thead', {}, el('tr', {}, ...headers.map(h => el('th', { textContent: h })))),
+    el('tbody', {}, ...rows.map(cells => el('tr', {}, ...cells.map(c => el('td', {}, c)))))) : el('p', { className: 'account-muted', textContent: empty });
+
+/** Кнопка с занятостью на время действия; ошибка — в статус $statusId. */
+async function busy(button, statusId, action) {
+    if (button) button.disabled = true;
+    try { return await action(); } catch (error) { status(statusId, error.message); } finally { if (button) button.disabled = false; }
 }
 
 // ---- Профиль ----
 
-function stat(value, label) {
-    return el('div', { className: 'account-stat' }, el('strong', { textContent: String(value) }), el('span', { textContent: label }));
-}
-
 function renderProfile(info) {
     const counts = info.counts || {};
-    const votes = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    const votes = Object.values(counts).reduce((a, b) => a + b, 0);
+    const stat = (value, label) => el('div', { className: 'account-stat' }, el('strong', { textContent: String(value) }), el('span', { textContent: label }));
     const copy = el('button', { type: 'button', className: 'account-secondary', textContent: 'Скопировать ID' });
-    copy.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(info.user_id);
-            copy.textContent = 'Скопировано';
-        } catch {
-            copy.textContent = 'Не удалось скопировать';
-        }
+    copy.onclick = async () => {
+        copy.textContent = await navigator.clipboard.writeText(info.user_id).then(() => 'Скопировано', () => 'Не удалось скопировать');
         setTimeout(() => { copy.textContent = 'Скопировать ID'; }, 1500);
-    });
-    $('account-profile-body').replaceChildren(
-        el('div', { className: 'account-profile-head' },
-            el('div', { className: 'account-avatar', textContent: info.user_id.slice(0, 2).toUpperCase(), ariaHidden: 'true' }),
-            el('div', {},
-                el('h3', { textContent: 'Ваш профиль' }),
-                el('p', { className: 'account-muted' }, 'ID ', revealable(info.user_id)),
-                el('p', { className: 'account-muted', textContent: `Тема поиска: «${info.topic}» · последний заход: ${formatDate(info.last_seen)}` })),
-            copy),
-        el('div', { className: 'account-stats' },
-            stat(info.pool, `${pluralRu(info.pool, 'запись', 'записи', 'записей')} ждёт оценки`),
-            stat(votes, pluralRu(votes, 'оценка', 'оценки', 'оценок')),
-            ...Object.entries(COLLECTION_LABELS).map(([key, label]) => stat(counts[key] ?? 0, label))),
-        el('p', { className: 'account-muted', textContent: `Профиль держится на куке в этом браузере. В другом браузере сайт заведёт новый профиль. Профили без заходов дольше ${info.retention_days} дней удаляются.` })
-    );
+    };
+    const body = $('account-profile-body');
+    body.classList.remove('is-loading', 'status-msg');
+    body.replaceChildren(
+        el('div', { className: 'account-profile-head' }, el('div', { className: 'account-avatar', textContent: info.user_id.slice(0, 2).toUpperCase(), ariaHidden: 'true' }),
+            el('div', {}, el('h3', { textContent: 'Ваш профиль' }), el('p', { className: 'account-muted' }, 'ID ', revealable(info.user_id)),
+                el('p', { className: 'account-muted', textContent: `Тема поиска: «${info.topic}» · последний заход: ${formatDate(info.last_seen)}` })), copy),
+        el('div', { className: 'account-stats' }, stat(info.pool, `${pluralRu(info.pool, 'запись', 'записи', 'записей')} ждёт оценки`), stat(votes, pluralRu(votes, 'оценка', 'оценки', 'оценок')),
+            ...Object.entries(COLLECTIONS).map(([k, label]) => stat(counts[k] ?? 0, label))),
+        el('p', { className: 'account-muted', textContent: `Профиль держится на куке в этом браузере. В другом браузере сайт заведёт новый профиль. Профили без заходов дольше ${info.retention_days} дней удаляются.` }));
+}
+
+function renderExposure(info) {
+    const exposed = info.exposed || [];
+    $('account-exposure').hidden = !exposed.length;
+    if (exposed.length) $('account-exposure').replaceChildren(el('strong', { textContent: 'Защита данных не работает' }),
+        el('p', { className: 'account-muted', textContent: `Apache не читает .htaccess, поэтому по HTTP отдаются служебные файлы: ${exposed.join(', ')}. Это каталог источников, история оценок и сам репозиторий (.git) — их может скачать любой, кто видит сайт в сети. Токены ботов на диске зашифрованы. Чтобы закрыть всё, выполните один раз в терминале:` }),
+        el('code', { className: 'account-command', textContent: info.fix_command }));
 }
 
 // ---- Соцсети ----
 
-async function loadVkOAuthStatus() {
-    const button = $('vk-oauth-button');
-    const status = $('vk-oauth-status');
+async function loadVkStatus() {
     try {
-        const data = await api('vk_oauth_status');
-        button.textContent = data.connected ? 'Переподключить VK' : 'Подключить VK';
-        status.textContent = pendingVkRedirectMessage || (!data.configured
-            ? 'Для OAuth задайте VK_CLIENT_ID и VK_REDIRECT_URI на сервере.'
-            : data.connected
-                ? `VK подключён${data.user_id ? ` · ID ${data.user_id}` : ''}.`
-                : 'Подключите VK, чтобы подбирать паблики.');
-        pendingVkRedirectMessage = '';
-    } catch (error) {
-        status.textContent = `Статус VK недоступен: ${error.message}`;
-    } finally {
-        button.disabled = false;
-    }
+        const d = await api('vk_oauth_status');
+        $('vk-oauth-button').textContent = d.connected ? 'Переподключить VK' : 'Подключить VK';
+        status('vk-oauth-status', vkMessage || (!d.configured ? 'Для OAuth задайте VK_CLIENT_ID и VK_REDIRECT_URI на сервере.' : d.connected ? `VK подключён${d.user_id ? ` · ID ${d.user_id}` : ''}.` : 'Подключите VK, чтобы подбирать паблики.'));
+        vkMessage = '';
+    } catch (error) { status('vk-oauth-status', `Статус VK недоступен: ${error.message}`); }
 }
 
-/** После возврата со страницы VK ID адрес содержит ?vk=<результат>: показываем его и чистим адрес. */
+/** После возврата с VK ID в адресе ?vk=<результат>: показать и убрать из адреса. */
 export function consumeVkRedirectResult() {
-    const result = new URLSearchParams(window.location.search).get('vk');
+    const result = new URLSearchParams(location.search).get('vk');
     if (!result) return false;
-    const url = new URL(window.location.href);
+    const url = new URL(location.href);
     url.searchParams.delete('vk');
     url.hash = '';
-    window.history.replaceState({}, '', url);
-    pendingVkRedirectMessage = VK_REDIRECT_MESSAGES[result] || VK_REDIRECT_MESSAGES.error;
-    $('vk-oauth-status').textContent = pendingVkRedirectMessage;
+    history.replaceState({}, '', url);
+    status('vk-oauth-status', vkMessage = VK_MESSAGES[result] || VK_MESSAGES.error);
     return true;
 }
 
-function renderTelegram(telegram) {
-    $('telegram-connected').hidden = !telegram;
-    $('telegram-form').hidden = Boolean(telegram);
-    if (!telegram) return;
-    const channel = telegram.chat_username ? `@${telegram.chat_username}` : telegram.chat_title;
-    $('telegram-summary').replaceChildren(
-        el('strong', { textContent: `Подключён канал «${telegram.chat_title || channel}»` }),
-        el('span', { className: 'account-muted', textContent: `${channel ? `${channel} · ` : ''}бот @${telegram.bot} · токен ${telegram.token} · с ${formatDate(telegram.connected_at)}` })
-    );
+function renderTelegram(t) {
+    $('telegram-connected').hidden = !t;
+    $('telegram-form').hidden = Boolean(t);
+    if (!t) return;
+    const channel = t.chat_username ? `@${t.chat_username}` : t.chat_title;
+    $('telegram-summary').replaceChildren(el('strong', { textContent: `Подключён канал «${t.chat_title || channel}»` }),
+        el('span', { className: 'account-muted', textContent: `${channel ? `${channel} · ` : ''}бот @${t.bot} · токен ${t.token} · с ${formatDate(t.connected_at)}` }));
 }
 
-/** Очередь отложенных постов и последние отправленные: что, когда и как ушло в канал. */
 async function loadTelegramQueue() {
+    const data = await api('telegram_queue').catch(() => null);
     const box = $('telegram-queue');
-    let data;
-    try {
-        data = await api('telegram_queue');
-    } catch {
-        return;   // очередь — дополнение: без неё кабинет работает
-    }
-    const scheduled = data.scheduled || [];
-    const published = data.published || [];
-    box.hidden = !data.connected || (!scheduled.length && !published.length);
+    const [scheduled, published] = [data?.scheduled || [], data?.published || []];
+    box.hidden = !data?.connected || (!scheduled.length && !published.length);
     if (box.hidden) return;
-    const sections = [];
-    if (scheduled.length) {
-        sections.push(el('h4', { textContent: `Запланировано: ${scheduled.length}` }), ...scheduled.map(post => {
-            const state = post.status === 'telegram' ? 'в «Отложенных» Telegram — уйдёт само' : post.status === 'failed' ? `не отправлено (${post.error})` : post.status === 'sending' ? 'отправляется…'
-                : post.error ? `будет повтор ${formatDate(post.publish_at)}: ${post.error}` : 'ждёт времени';
-            const cancel = el('button', { type: 'button', className: 'account-secondary', textContent: post.status === 'sending' ? '…' : 'Отменить', disabled: post.status === 'sending' });
-            cancel.addEventListener('click', async () => {
-                cancel.disabled = true;
-                try { await api('telegram_cancel', { body: { id: post.id } }); log('Отложенный пост отменён.'); } catch (error) { log(`Не удалось отменить пост: ${error.message}`); }
-                loadTelegramQueue();
-            });
-            return el('div', { className: 'queue-row' }, el('div', { className: 'queue-main' },
-                el('strong', { textContent: formatDate(post.publish_at) }),
-                el('span', { textContent: `${post.media} ${pluralRu(post.media, 'файл', 'файла', 'файлов')}${post.text ? ' · ' + post.text : ''}` }),
-                el('span', { className: `account-muted${post.status === 'failed' || post.error ? ' queue-error' : ''}`, textContent: state })), cancel);
-        }));
-    }
-    if (published.length) {
-        sections.push(el('h4', { textContent: 'Последние отправленные' }), ...published.map(entry => el('div', { className: 'queue-row' }, el('div', { className: 'queue-main' },
-            el('strong', { textContent: formatDate(entry.at) }),
-            el('span', { textContent: `${entry.media} ${pluralRu(entry.media, 'файл', 'файла', 'файлов')}${entry.text ? ' · ' + entry.text : ''}` }),
-            entry.status === 'ok'
-                ? (entry.url ? el('a', { href: entry.url, target: '_blank', rel: 'noopener noreferrer', textContent: 'Открыть в Telegram ↗' }) : el('span', { className: 'account-muted', textContent: 'отправлено' }))
-                : el('span', { className: 'account-muted queue-error', textContent: `не отправлено: ${entry.error}` })))));
-    }
-    box.replaceChildren(...sections);
-}
-
-/** Предупреждение, если сервер отдаёт служебные файлы напрямую (Apache не читает .htaccess), и готовая команда для исправления. */
-function renderExposure(info) {
-    const box = $('account-exposure');
-    const exposed = info.exposed || [];
-    box.hidden = exposed.length === 0;
-    if (!exposed.length) return;
+    const row = (when, entry, extra, action = null) => el('div', { className: 'queue-row' }, el('div', { className: 'queue-main' }, el('strong', { textContent: formatDate(when) }),
+        el('span', { textContent: `${files(entry.media)}${entry.text ? ' · ' + entry.text : ''}` }), extra), action);
     box.replaceChildren(
-        el('strong', { textContent: 'Защита данных не работает' }),
-        el('p', { className: 'account-muted', textContent: `Apache не читает .htaccess, поэтому по HTTP отдаются служебные файлы: ${exposed.join(', ')}. Это каталог источников, история оценок и сам репозиторий (.git) — их может скачать любой, кто видит сайт в сети. Токены ботов на диске зашифрованы. Чтобы закрыть всё, выполните один раз в терминале:` }),
-        el('code', { className: 'account-command', textContent: info.fix_command || 'sudo sh tools/apache-setup.sh' }));
+        ...(scheduled.length ? [el('h4', { textContent: `Запланировано: ${scheduled.length}` }), ...scheduled.map(p => {
+            const text = { telegram: 'в «Отложенных» Telegram — уйдёт само', failed: `не отправлено (${p.error})`, sending: 'отправляется…' }[p.status] || (p.error ? `будет повтор ${formatDate(p.publish_at)}: ${p.error}` : 'ждёт времени');
+            const cancel = el('button', { type: 'button', className: 'account-secondary', textContent: p.status === 'sending' ? '…' : 'Отменить', disabled: p.status === 'sending' });
+            cancel.onclick = async () => {
+                cancel.disabled = true;
+                await api('telegram_cancel', { body: { id: p.id } }).then(() => log('Отложенный пост отменён.'), e => log(`Не удалось отменить пост: ${e.message}`));
+                loadTelegramQueue();
+            };
+            return row(p.publish_at, p, el('span', { className: `account-muted${p.status === 'failed' || p.error ? ' queue-error' : ''}`, textContent: text }), cancel);
+        })] : []),
+        ...(published.length ? [el('h4', { textContent: 'Последние отправленные' }), ...published.map(e => row(e.at, e, e.status !== 'ok' ? el('span', { className: 'account-muted queue-error', textContent: `не отправлено: ${e.error}` })
+            : e.url ? el('a', { href: e.url, target: '_blank', rel: 'noopener noreferrer', textContent: 'Открыть в Telegram ↗' }) : el('span', { className: 'account-muted', textContent: 'отправлено' })))] : []));
 }
 
-// ---- Отложка средствами Telegram (личный аккаунт) ----
-
-function renderTelegramUser(info, botConnected) {
+/** Блок «Отложенные посты средствами Telegram»: ключи (если не сохранены), телефон, код, пароль, QR. */
+function renderTelegramUser(info, botConnected = true) {
     $('tgu-card').hidden = !botConnected;
     if (!botConnected) return;
-    // Ключи приложения уже сохранены на сервере (их вводят один раз): поля и шаг про my.telegram.org не нужны
-    const keysSaved = Boolean(info?.app_keys);
-    $('tgu-keys').hidden = keysSaved;
-    $('tgu-step-keys').hidden = keysSaved;
-    $('tgu-api-id').required = !keysSaved;
-    $('tgu-api-hash').required = !keysSaved;
-    const connected = Boolean(info?.connected);
-    const awaiting = !connected && Boolean(info?.awaiting_code);
+    const keys = Boolean(info?.app_keys);
+    $('tgu-keys').hidden = $('tgu-step-keys').hidden = keys;
+    $('tgu-api-id').required = $('tgu-api-hash').required = !keys;
+    const [connected, awaiting] = [Boolean(info?.connected), !info?.connected && Boolean(info?.awaiting_code)];
     $('tgu-connected').hidden = !connected;
     $('tgu-start').hidden = connected || awaiting || !$('tgu-qr').hidden;
     $('tgu-confirm').hidden = !awaiting;
     if (connected) {
-        $('tgu-summary').replaceChildren(
-            el('strong', { textContent: `Аккаунт ${info.name || ''}${info.username ? ' @' + info.username : ''} подключён` }),
+        $('tgu-summary').replaceChildren(el('strong', { textContent: `Аккаунт ${info.name || ''}${info.username ? ' @' + info.username : ''} подключён` }),
             el('span', { className: 'account-muted', textContent: `с ${formatDate(info.connected_at)} · отложенные посты ставятся в «Отложенные» канала` }),
-            ...(info.warning ? [el('span', { className: 'queue-error', textContent: info.warning })] : []));
-    } else if (awaiting && info.qr) {
-        $('tgu-password-row').hidden = false;
-        $('tgu-resend').hidden = true;
-        $('tgu-code').closest('label').hidden = true;
-        $('tgu-status').textContent = 'Вход по QR принят. В аккаунте включена двухэтапная защита: введите пароль.';
+            info.warning ? el('span', { className: 'queue-error', textContent: info.warning }) : null);
     } else if (awaiting) {
-        $('tgu-code').closest('label').hidden = false;
-        const where = {
-            app: 'в приложение Telegram: ищите сообщение от «Telegram» (служебные уведомления) в чатах на телефоне или компьютере, где вы уже вошли',
-            sms: 'по SMS', call: 'голосовым звонком', flashcall: 'звонком (последние цифры номера — код)', missedcall: 'звонком (последние цифры номера — код)'
-        }[info.code_type] || 'способом, который выбрал Telegram';
-        $('tgu-status').textContent = `Код отправлен на ${info.phone} ${where}.`;
-        const resend = $('tgu-resend');
-        resend.hidden = !info.next_type;
-        resend.textContent = { sms: 'Отправить код по SMS', call: 'Позвонить с кодом', flashcall: 'Код звонком', missedcall: 'Код звонком' }[info.next_type] || 'Запросить код другим способом';
+        $('tgu-code').closest('label').hidden = info.qr;
+        if (info.qr) { $('tgu-password-row').hidden = false; $('tgu-resend').hidden = true; return status('tgu-status', 'Вход по QR принят. В аккаунте включена двухэтапная защита: введите пароль.'); }
+        const where = { app: 'в приложение Telegram: ищите сообщение от «Telegram» (служебные уведомления) в чатах на телефоне или компьютере, где вы уже вошли', sms: 'по SMS',
+            call: 'голосовым звонком', flashcall: 'звонком (последние цифры номера — код)', missedcall: 'звонком (последние цифры номера — код)' }[info.code_type] || 'способом, который выбрал Telegram';
+        status('tgu-status', `Код отправлен на ${info.phone} ${where}.`);
+        $('tgu-resend').hidden = !info.next_type;
+        $('tgu-resend').textContent = { sms: 'Отправить код по SMS', call: 'Позвонить с кодом', flashcall: 'Код звонком', missedcall: 'Код звонком' }[info.next_type] || 'Запросить код другим способом';
     }
 }
 
-/**
- * Телефон в международный вид: «8 (999) 123-45-67», «9991234567», «7 999…» → «+7 999 123-45-67». Номера других стран
- * (с «+» в начале) остаются как есть, только без лишних знаков. Пустое и непохожее на номер не трогаем.
- */
+/** «8 (999) 123-45-67», «9991234567» → «+7 999 123-45-67»; номера других стран с «+» — без лишних знаков. */
 export function normalizePhone(value) {
     const raw = String(value || '').trim();
-    const digits = raw.replace(/\D/g, '');
-    if (!digits) return raw;
-    if (raw.startsWith('+') && !digits.startsWith('7')) return `+${digits}`;
-    let national = digits;
-    if (digits.length === 11 && (digits[0] === '7' || digits[0] === '8')) national = digits.slice(1);
-    else if (digits.length !== 10) return raw.startsWith('+') ? `+${digits}` : raw;   // непонятная длина: не угадываем
-    return `+7 ${national.slice(0, 3)} ${national.slice(3, 6)}-${national.slice(6, 8)}-${national.slice(8)}`;
+    const d = raw.replace(/\D/g, '');
+    if (!d) return raw;
+    if (raw.startsWith('+') && !d.startsWith('7')) return `+${d}`;
+    const n = d.length === 11 && '78'.includes(d[0]) ? d.slice(1) : d.length === 10 ? d : null;
+    return n ? `+7 ${n.slice(0, 3)} ${n.slice(3, 6)}-${n.slice(6, 8)}-${n.slice(8)}` : raw.startsWith('+') ? `+${d}` : raw;
 }
 
-async function startTelegramUser(event) {
-    event.preventDefault();
-    const button = event.submitter;
-    $('tgu-phone').value = normalizePhone($('tgu-phone').value);
-    button.disabled = true;
-    $('tgu-status').textContent = 'Запрашиваю код у Telegram…';
-    try {
-        const data = await api('telegram_user_start', { body: { api_id: $('tgu-api-id').value, api_hash: $('tgu-api-hash').value, phone: $('tgu-phone').value } });
-        $('tgu-api-id').value = '';
-        $('tgu-api-hash').value = '';
-        $('tgu-password-row').hidden = true;
-        renderTelegramUser(data.telegram_user, true);
-    } catch (error) {
-        $('tgu-status').textContent = error.message;
-    } finally {
-        button.disabled = false;
-    }
-}
+function stopQr() { clearInterval(qrTimer); $('tgu-qr').hidden = true; }
 
-let qrTimer = 0;
-
-function stopQr() {
-    clearInterval(qrTimer);
-    qrTimer = 0;
-    $('tgu-qr').hidden = true;
-}
-
-/** Вход по QR: показывает код, раз в две секунды спрашивает сервер, отсканировали ли его. */
-async function startTelegramQr() {
-    $('tgu-status').textContent = 'Готовлю QR-код…';
-    try {
-        await api('telegram_user_qr_start', { body: { api_id: $('tgu-api-id').value, api_hash: $('tgu-api-hash').value } });
-    } catch (error) {
-        $('tgu-status').textContent = error.message;
-        return;
-    }
+/** QR-вход: код на экране, раз в 2 с спрашиваем сервер, отсканировали ли его. */
+async function startQr() {
+    status('tgu-status', 'Готовлю QR-код…');
+    try { await api('telegram_user_qr_start', { body: { api_id: $('tgu-api-id').value, api_hash: $('tgu-api-hash').value } }); } catch (error) { return status('tgu-status', error.message); }
     $('tgu-start').hidden = true;
     $('tgu-qr').hidden = false;
     $('tgu-qr-image').replaceChildren();
-    $('tgu-status').textContent = 'Жду, пока вы отсканируете код в приложении Telegram…';
+    status('tgu-status', 'Жду, пока вы отсканируете код в приложении Telegram…');
+    let polling = false;
     clearInterval(qrTimer);
-    let polling = false;   // следующий запрос не уходит, пока не вернулся предыдущий (проверка канала занимает время)
     qrTimer = setInterval(async () => {
         if (polling) return;
         polling = true;
-        let data;
-        try { data = await api('telegram_user_qr_status'); } catch (error) { return; } finally { polling = false; }
-        if (data.status === 'busy') return;
-        if (data.status === 'waiting') {
-            if (data.svg) $('tgu-qr-image').replaceChildren(el('img', { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(data.svg)}`, alt: 'QR-код', width: 220, height: 220 }));
-            return;
-        }
+        const d = await api('telegram_user_qr_status').catch(() => null).finally(() => { polling = false; });
+        if (!d || d.status === 'busy') return;
+        if (d.status === 'waiting') return d.svg && $('tgu-qr-image').replaceChildren(el('img', { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(d.svg)}`, alt: 'QR-код', width: 220, height: 220 }));
         stopQr();
-        if (data.status === 'success') {
-            $('tgu-status').textContent = '';
-            renderTelegramUser(data.telegram_user, true);
-            log('Telegram: аккаунт подключён по QR-коду, отложенные посты теперь ставятся в «Отложенные» канала.');
-        } else if (data.status === 'needs_password') {
-            loadAccount();
-        } else {
+        if (d.status === 'success') { status('tgu-status', ''); renderTelegramUser(d.telegram_user); log('Telegram: аккаунт подключён по QR-коду, отложенные посты теперь ставятся в «Отложенные» канала.'); }
+        else if (d.status === 'needs_password') loadAccount();
+        else {
             $('tgu-start').hidden = false;
-            $('tgu-status').textContent = data.status === 'expired' ? 'QR-код устарел: запросите новый.'
-                : data.status === 'none' ? 'Вход по QR прервался: запросите код ещё раз.' : (data.error || 'Не удалось войти по QR-коду.');
-            log(`Telegram, вход по QR: ${data.status === 'error' ? data.error : data.status}`);
+            status('tgu-status', { expired: 'QR-код устарел: запросите новый.', none: 'Вход по QR прервался: запросите код ещё раз.' }[d.status] || d.error || 'Не удалось войти по QR-коду.');
+            log(`Telegram, вход по QR: ${d.status === 'error' ? d.error : d.status}`);
         }
     }, 2000);
 }
 
-async function resendTelegramUser() {
-    const button = $('tgu-resend');
-    button.disabled = true;
-    $('tgu-status').textContent = 'Запрашиваю код другим способом…';
-    try {
-        const data = await api('telegram_user_resend', { body: null });
-        renderTelegramUser(data.telegram_user, true);
-    } catch (error) {
-        $('tgu-status').textContent = error.message;
-    } finally {
-        button.disabled = false;
-    }
-}
-
-async function confirmTelegramUser(event) {
-    event.preventDefault();
-    const button = event.submitter;
-    button.disabled = true;
-    $('tgu-status').textContent = 'Проверяю код и права в канале…';
-    try {
-        const data = await api('telegram_user_confirm', { body: { code: $('tgu-code').value, password: $('tgu-password').value } });
-        if (data.status === 'needs_password') {
-            $('tgu-password-row').hidden = false;
-            $('tgu-password').focus();
-            $('tgu-status').textContent = 'В аккаунте включена двухэтапная защита: введите пароль.';
-            return;
-        }
-        $('tgu-code').value = '';
-        $('tgu-password').value = '';
-        $('tgu-status').textContent = '';
-        renderTelegramUser(data.telegram_user, true);
-        log('Telegram: аккаунт подключён, отложенные посты теперь ставятся в «Отложенные» канала.');
-    } catch (error) {
-        $('tgu-status').textContent = error.message;
-    } finally {
-        button.disabled = false;
-    }
-}
-
-async function disconnectTelegramUser() {
-    try {
-        const data = await api('telegram_user_disconnect', { body: null });
-        renderTelegramUser(data.telegram_user, true);
-        $('tgu-status').textContent = 'Отключено. Чтобы завершить вход совсем, закройте сессию «Postmaker» в Telegram → Настройки → Устройства.';
-        log('Аккаунт Telegram отключён: отложенные посты снова идут через очередь приложения.');
-    } catch (error) {
-        $('tgu-status').textContent = error.message;
-    }
-}
-
-async function connectTelegram(event) {
-    event.preventDefault();
-    const button = $('telegram-connect');
-    button.disabled = true;
-    $('telegram-status').textContent = 'Проверяю бота и канал в Telegram…';
-    try {
-        const data = await api('telegram_connect', { body: { token: $('telegram-token').value, channel: $('telegram-channel').value } });
+function initializeTelegram() {
+    $('telegram-form').addEventListener('submit', e => { e.preventDefault(); busy($('telegram-connect'), 'telegram-status', async () => {
+        status('telegram-status', 'Проверяю бота и канал в Telegram…');
+        const d = await api('telegram_connect', { body: { token: $('telegram-token').value, channel: $('telegram-channel').value } });
         $('telegram-token').value = '';
-        $('telegram-status').textContent = '';
-        renderTelegram(data.telegram);
+        status('telegram-status', '');
+        renderTelegram(d.telegram);
         loadAccount();
-        loadTelegramQueue();
-        log(`Telegram: подключён канал «${data.telegram.chat_title}».`);
-    } catch (error) {
-        $('telegram-status').textContent = error.message;
-    } finally {
-        button.disabled = false;
-    }
-}
-
-async function disconnectTelegram() {
-    const button = $('telegram-disconnect');
-    // Подтверждение прямо в кнопке: первое нажатие спрашивает, второе отключает
-    if (button.dataset.armed !== '1') {
-        button.dataset.armed = '1';
-        button.textContent = 'Точно отключить?';
-        setTimeout(() => { button.dataset.armed = ''; button.textContent = 'Отключить'; }, 4000);
-        return;
-    }
-    button.disabled = true;
-    try {
-        await api('telegram_disconnect', { body: null });
-        renderTelegram(null);
-        log('Telegram отключён.');
-    } catch (error) {
-        $('telegram-status').textContent = error.message;
-    } finally {
-        button.disabled = false;
-        button.dataset.armed = '';
-        button.textContent = 'Отключить';
-    }
+        log(`Telegram: подключён канал «${d.telegram.chat_title}».`);
+    }); });
+    $('telegram-disconnect').addEventListener('click', e => {   // подтверждение в самой кнопке: первое нажатие спрашивает
+        const b = e.currentTarget;
+        const reset = () => { b.dataset.armed = ''; b.textContent = 'Отключить'; };
+        if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = 'Точно отключить?'; return setTimeout(reset, 4000); }
+        busy(b, 'telegram-status', async () => { await api('telegram_disconnect', { body: null }); renderTelegram(null); log('Telegram отключён.'); }).finally(reset);
+    });
+    const phone = $('tgu-phone');
+    phone.addEventListener('blur', () => { phone.value = normalizePhone(phone.value); });
+    phone.addEventListener('paste', () => setTimeout(() => { phone.value = normalizePhone(phone.value); }));
+    $('tgu-start').addEventListener('submit', e => { e.preventDefault(); phone.value = normalizePhone(phone.value); busy(e.submitter, 'tgu-status', async () => {
+        status('tgu-status', 'Запрашиваю код у Telegram…');
+        const d = await api('telegram_user_start', { body: { api_id: $('tgu-api-id').value, api_hash: $('tgu-api-hash').value, phone: phone.value } });
+        $('tgu-api-id').value = $('tgu-api-hash').value = '';
+        $('tgu-password-row').hidden = true;
+        renderTelegramUser(d.telegram_user);
+    }); });
+    $('tgu-confirm').addEventListener('submit', e => { e.preventDefault(); busy(e.submitter, 'tgu-status', async () => {
+        status('tgu-status', 'Проверяю код и права в канале…');
+        const d = await api('telegram_user_confirm', { body: { code: $('tgu-code').value, password: $('tgu-password').value } });
+        if (d.status === 'needs_password') { $('tgu-password-row').hidden = false; $('tgu-password').focus(); return status('tgu-status', 'В аккаунте включена двухэтапная защита: введите пароль.'); }
+        $('tgu-code').value = $('tgu-password').value = '';
+        status('tgu-status', '');
+        renderTelegramUser(d.telegram_user);
+        log('Telegram: аккаунт подключён, отложенные посты теперь ставятся в «Отложенные» канала.');
+    }); });
+    $('tgu-resend').addEventListener('click', e => busy(e.currentTarget, 'tgu-status', async () => {
+        status('tgu-status', 'Запрашиваю код другим способом…');
+        renderTelegramUser((await api('telegram_user_resend', { body: null })).telegram_user);
+    }));
+    $('tgu-disconnect').addEventListener('click', () => busy(null, 'tgu-status', async () => {
+        renderTelegramUser((await api('telegram_user_disconnect', { body: null })).telegram_user);
+        status('tgu-status', 'Отключено. Чтобы завершить вход совсем, закройте сессию «Postmaker» в Telegram → Настройки → Устройства.');
+        log('Аккаунт Telegram отключён.');
+    }));
+    $('tgu-restart').addEventListener('click', () => busy(null, 'tgu-status', async () => { renderTelegramUser((await api('telegram_user_disconnect', { body: null })).telegram_user); status('tgu-status', ''); }));
+    $('tgu-qr-button').addEventListener('click', startQr);
+    $('tgu-qr-cancel').addEventListener('click', () => { stopQr(); $('tgu-start').hidden = false; status('tgu-status', ''); });
 }
 
 // ---- Мои данные и куки ----
 
-/** Куки, видимые скриптам (без HttpOnly): имя → значение. */
-function scriptCookies() {
-    return Object.fromEntries(document.cookie.split(';').map(part => part.trim()).filter(Boolean).map(part => {
-        const index = part.indexOf('=');
-        return [decodeURIComponent(part.slice(0, index)), decodeURIComponent(part.slice(index + 1))];
-    }));
-}
-
-function renderCookies(serverCookies) {
-    const visible = scriptCookies();
-    const rows = serverCookies.map(cookie => [
-        el('code', { textContent: cookie.name }),
-        revealable(cookie.value),
-        cookie.lifetime,
-        cookie.http_only ? el('span', { className: 'privacy-badge', textContent: 'HttpOnly', title: 'Скрипты страницы её не видят — только сервер' }) : 'видна скриптам',
-        cookie.purpose
-    ]);
-    // Куки, которые видит страница, но сервер не получил (например, поставленные для другого пути)
-    for (const [name, value] of Object.entries(visible)) {
-        if (serverCookies.some(cookie => cookie.name === name)) continue;
-        rows.push([el('code', { textContent: name }), revealable(value), '—', 'видна скриптам', 'Есть в браузере, но сервер её не получает.']);
-    }
-    $('privacy-cookies').replaceChildren(table(['Кука', 'Значение', 'Срок', 'Доступ', 'Зачем'], rows, 'Браузер не отправляет этому сайту ни одной куки.'));
+function renderPrivacy(info) {
+    const visible = Object.fromEntries(document.cookie.split(';').map(p => p.trim()).filter(Boolean).map(p => { const i = p.indexOf('='); return [decodeURIComponent(p.slice(0, i)), decodeURIComponent(p.slice(i + 1))]; }));
+    const cookies = info.cookies.map(c => [el('code', { textContent: c.name }), revealable(c.value), c.lifetime,
+        c.http_only ? el('span', { className: 'privacy-badge', textContent: 'HttpOnly', title: 'Скрипты страницы её не видят — только сервер' }) : 'видна скриптам', c.purpose]);
+    for (const [name, value] of Object.entries(visible)) if (!info.cookies.some(c => c.name === name)) cookies.push([el('code', { textContent: name }), revealable(value), '—', 'видна скриптам', 'Есть в браузере, но сервер её не получает.']);
+    $('privacy-cookies').replaceChildren(table(['Кука', 'Значение', 'Срок', 'Доступ', 'Зачем'], cookies, 'Браузер не отправляет этому сайту ни одной куки.'));
+    renderStorage();
+    const total = info.files.reduce((a, f) => a + f.size, 0);
+    $('privacy-server-note').textContent = `Папка вашего профиля: ${files(info.files.length)}, ${formatBytes(total)}.`
+        + (info.session_keys.length ? ` В сессии PHP: ${info.session_keys.join(', ')}.` : ' Сессии PHP нет.') + ' Общие для всех данные (каталог источников, кэш картинок и анализов) к профилю не привязаны.';
+    $('privacy-files').replaceChildren(table(['Файл', 'Размер', 'Изменён', 'Что внутри'], info.files.map(f => [el('code', { textContent: f.name }), formatBytes(f.size), formatDate(f.modified), f.about]), 'Файлов нет.'));
 }
 
 function renderStorage() {
     const rows = [];
-    for (const [label, storage] of [['localStorage', window.localStorage], ['sessionStorage', window.sessionStorage]]) {
+    for (const [label, storage] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]]) {
         let keys = [];
-        try {
-            keys = Object.keys(storage);
-        } catch {
-            continue; // хранилище запрещено настройками браузера
-        }
+        try { keys = Object.keys(storage); } catch { continue; }   // хранилище запрещено настройками браузера
         for (const key of keys) {
             const value = storage.getItem(key) ?? '';
-            const remove = el('button', { type: 'button', className: 'account-secondary', textContent: 'Удалить' });
-            remove.addEventListener('click', () => { storage.removeItem(key); renderStorage(); });
-            rows.push([label, el('code', { textContent: key }), revealable(value), formatBytes(new Blob([value]).size), remove]);
+            rows.push([label, el('code', { textContent: key }), revealable(value), formatBytes(new Blob([value]).size),
+                el('button', { type: 'button', className: 'account-secondary', textContent: 'Удалить', onclick: () => { storage.removeItem(key); renderStorage(); } })]);
         }
     }
     $('privacy-storage').replaceChildren(table(['Где', 'Ключ', 'Значение', 'Размер', ''], rows, 'Пусто: сайт ничего не хранит в localStorage и sessionStorage.'));
 }
 
-function renderServerData(info) {
-    const total = info.files.reduce((sum, file) => sum + file.size, 0);
-    $('privacy-server-note').textContent = `Папка вашего профиля: ${info.files.length} ${pluralRu(info.files.length, 'файл', 'файла', 'файлов')}, ${formatBytes(total)}.`
-        + (info.session_keys.length ? ` В сессии PHP: ${info.session_keys.join(', ')}.` : ' Сессии PHP нет.')
-        + ' Общие для всех данные (каталог источников, кэш картинок и анализов) к профилю не привязаны.';
-    $('privacy-files').replaceChildren(table(['Файл', 'Размер', 'Изменён', 'Что внутри'],
-        info.files.map(file => [el('code', { textContent: file.name }), formatBytes(file.size), formatDate(file.modified), file.about]),
-        'Файлов нет.'));
-}
-
-// ---- Загрузка ----
-
 async function loadAccount() {
-    if (DEBUG_MODE) {
-        $('account-profile-body').textContent = 'В демо-режиме личного кабинета нет: данные живут только в сессии демо.';
-        return null;
-    }
+    if (DEBUG_MODE) return void ($('account-profile-body').textContent = 'В демо-режиме личного кабинета нет: данные живут только в сессии демо.');
     try {
         const info = await api('account_info');
-        $('account-profile-body').classList.remove('is-loading', 'status-msg');
         renderProfile(info);
         renderTelegram(info.telegram);
         renderTelegramUser(info.telegram_user, Boolean(info.telegram));
         renderExposure(info);
         if (info.telegram) loadTelegramQueue();
-        renderCookies(info.cookies);
-        renderStorage();
-        renderServerData(info);
-        return info;
+        renderPrivacy(info);
     } catch (error) {
         $('account-profile-body').classList.remove('is-loading', 'status-msg');
         $('account-profile-body').textContent = `Не удалось загрузить кабинет: ${error.message}`;
-        return null;
     }
 }
 
-export function initializeAccountTab() {
-    document.querySelectorAll('.account-nav [data-account-section]').forEach(button => {
-        button.addEventListener('click', () => openAccountSection(button.dataset.accountSection));
+// ---- Базы данных: записи JSON-файлов, правка с проверкой «запись не изменилась» на сервере ----
+
+const db = { databases: [], ready: null, items: [], editing: null };
+const dbSelected = () => [$('database-select').value, $('database-collection-select').value];
+const dbStatus = (text, error = false) => { $('database-status').textContent = text; $('database-status').classList.toggle('error-msg', error); };
+const option = ({ id, label }) => el('option', { value: id, textContent: label });
+
+function loadDatabaseOptions() {
+    return db.ready ??= api('database_options').then(async d => {
+        db.databases = d.databases || [];
+        $('database-select').replaceChildren(...db.databases.map(option));
+        await loadCollections();
+    }).catch(error => { db.ready = null; dbStatus(`Не удалось загрузить базы: ${error.message}`, true); });
+}
+
+async function loadCollections() {
+    $('database-collection-select').replaceChildren(...(db.databases.find(d => d.id === $('database-select').value)?.collections || []).map(option));
+    await loadRecords();
+}
+
+function recordSummary(r) {
+    if (r === null || typeof r !== 'object') return String(r);
+    const rating = r.rating ?? r.rating_assigned;
+    const details = [rating != null && `прогноз ${rating}%`, r.relevance != null && `по теме ${r.relevance}%`, r.topic && `тема: ${r.topic}`, r.source, r.why_relevant, r.description].filter(Boolean).join(' · ');
+    return [r.text || r.name || r.title || r.source || r.url || r.image || JSON.stringify(r), details].filter(Boolean).join('\n');
+}
+
+async function loadRecords() {
+    const [database, collection] = dbSelected();
+    if (!database || !collection) return;
+    dbStatus('Загружаю записи...');
+    try {
+        const d = await api('database_read', { params: { database, collection } });
+        db.items = d.items || [];
+        dbStatus(`${d.database_label} · ${d.collection_label} · ${db.items.length} ${pluralRu(db.items.length, 'запись', 'записи', 'записей')}`);
+    } catch (error) { db.items = []; dbStatus(`Не удалось прочитать коллекцию: ${error.message}`, true); }
+    const button = (className, textContent, onclick) => el('button', { type: 'button', className, textContent, onclick });
+    $('database-records').replaceChildren(...(db.items.length ? db.items.map((r, i) => el('article', { className: 'database-record' },
+        el('span', { className: 'database-record-number', textContent: `#${i + 1}` }), el('div', { className: 'database-record-summary', textContent: recordSummary(r) }),
+        el('div', { className: 'database-record-actions' }, button('database-edit-button', 'Редактировать', () => openDialog('Редактировать запись', r, i)),
+            safeSourcePostUrl(r) ? el('a', { className: 'database-source-link', href: safeSourcePostUrl(r), target: '_blank', rel: 'noopener noreferrer', textContent: 'Пост ↗' }) : null,
+            button('database-delete-button', 'Удалить', () => confirm(`Удалить запись #${i + 1}? Это действие нельзя отменить.`) && change('database_delete', { index: i, expected: r })))))
+        : [el('div', { className: 'database-empty', textContent: 'В этой коллекции пока нет записей.' })]));
+}
+
+/** Заготовка новой записи под коллекцию. */
+function template(database, collection) {
+    const now = Math.floor(Date.now() / 1000);
+    return database === 'content_pool' ? { image: '', text: '', description: '', why_relevant: '', relevance: 0, rating: 0, source: '', board: '', thread_id: '', post_id: '', source_url: '' }
+        : database === 'content_history' ? { image: '', text: '', description: '', rating_assigned: 0, source: '', timestamp: now }
+        : { '2ch_boards': 'b', vk_publics: { id: '', name: '' }, telegram_channels: { id: '', name: '' }, source_votes: { source_id: '', platform: '', name: '', vote: 'approve', timestamp: now } }[collection] ?? {};
+}
+
+function openDialog(title, record, index = null) {
+    db.editing = index;
+    $('database-dialog-title').textContent = title;
+    $('database-record-json').value = JSON.stringify(record, null, 2);
+    $('database-edit-dialog').showModal();
+}
+
+async function change(action, extra) {
+    const [database, collection] = dbSelected();
+    try { await api(action, { body: { database, collection, ...extra } }); $('database-edit-dialog').close(); await loadRecords(); return true; }
+    catch (error) { dbStatus(`Не удалось ${action === 'database_delete' ? 'удалить' : 'сохранить'} запись: ${error.message}`, true); return false; }
+}
+
+/** «Добавить вручную» на пустом пуле: редактор с заготовкой записи пула. */
+export async function openNewItemEditor() {
+    if (DEBUG_MODE) return;
+    openAccountSection('databases');
+    await loadDatabaseOptions();
+    $('database-select').value = 'content_pool';
+    await loadCollections();
+    openDialog('Добавить запись', template('content_pool', 'items'));
+}
+
+function initializeDatabases(onReset) {
+    $('database-select').addEventListener('change', loadCollections);
+    $('database-collection-select').addEventListener('change', loadRecords);
+    $('database-refresh').addEventListener('click', loadRecords);
+    $('database-add').addEventListener('click', () => openDialog('Добавить запись', template(...dbSelected())));
+    $('database-cancel').addEventListener('click', () => $('database-edit-dialog').close());
+    $('database-edit-form').addEventListener('submit', e => {
+        e.preventDefault();
+        let record;
+        try { record = JSON.parse($('database-record-json').value); } catch (error) { return dbStatus(`Некорректный JSON: ${error.message}`, true); }
+        db.editing === null ? change('database_add', { record }) : change('database_update', { record, index: db.editing, expected: db.items[db.editing] });
     });
-    $('vk-oauth-button').addEventListener('click', () => window.location.assign(apiUrl('vk_oauth_start')));
-    $('telegram-form').addEventListener('submit', connectTelegram);
-    $('telegram-disconnect').addEventListener('click', disconnectTelegram);
-    $('tgu-start').addEventListener('submit', startTelegramUser);
-    $('tgu-phone').addEventListener('blur', () => { $('tgu-phone').value = normalizePhone($('tgu-phone').value); });   // приводим к +7 сразу, как только вышли из поля
-    $('tgu-phone').addEventListener('paste', () => setTimeout(() => { $('tgu-phone').value = normalizePhone($('tgu-phone').value); }));
-    $('tgu-confirm').addEventListener('submit', confirmTelegramUser);
-    $('tgu-disconnect').addEventListener('click', disconnectTelegramUser);
-    $('tgu-resend').addEventListener('click', resendTelegramUser);
-    $('tgu-qr-button').addEventListener('click', startTelegramQr);
-    $('tgu-qr-cancel').addEventListener('click', () => { stopQr(); $('tgu-start').hidden = false; $('tgu-status').textContent = ''; });
-    $('tgu-restart').addEventListener('click', async () => {
-        try { renderTelegramUser((await api('telegram_user_disconnect', { body: null })).telegram_user, true); $('tgu-status').textContent = ''; } catch (error) { $('tgu-status').textContent = error.message; }
+    $('database-reset').addEventListener('click', e => {
+        if (!confirm('Очистить ваши данные? Пул контента и история оценок станут пустыми, сохранённые картинки удалятся. Тема поиска и общий каталог источников останутся. Это действие нельзя отменить.')) return;
+        busy(e.currentTarget, 'database-status', async () => {
+            const d = await api('database_reset', { body: null });
+            log(`Базы очищены. Поиск контента: ${['started', 'running'].includes(d.parser) ? 'запущен' : 'не запустился'}.`);
+            watchParser();
+            onReset?.();
+            await loadRecords();
+        });
     });
-    onAccountSection('profile', loadAccount);
-    onAccountSection('social', () => { loadVkOAuthStatus(); loadAccount(); });
-    onAccountSection('privacy', loadAccount);
-    onTabOpen('account-tab', () => openAccountSection(currentSection));
-    if (DEBUG_MODE) document.querySelector('.account-nav [data-account-section="databases"]').hidden = true;
+}
+
+export function initializeAccountTab({ onDatabasesReset } = {}) {
+    document.querySelectorAll('[data-account-section]').forEach(b => b.addEventListener('click', () => openAccountSection(b.dataset.accountSection)));
+    $('vk-oauth-button').addEventListener('click', () => location.assign(apiUrl('vk_oauth_start')));
+    initializeTelegram();
+    Object.assign(sections, { profile: loadAccount, privacy: loadAccount, social: () => { loadVkStatus(); loadAccount(); }, databases: loadDatabaseOptions });
+    onTabOpen('account-tab', () => openAccountSection(current));
+    if (DEBUG_MODE) document.querySelector('[data-account-section="databases"]').hidden = true;
+    else initializeDatabases(onDatabasesReset);
 }

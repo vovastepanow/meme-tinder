@@ -1,139 +1,342 @@
 <?php
-// Пул контента и история оценок: поиск записи, перестановки в пуле, запись голоса, ссылки на исходные посты.
-
-/** Коллекции истории, записи которых показываются во вкладке «Предложка» (и держат свои файлы в кэше медиа). */
-const PROPOSAL_COLLECTIONS = ['liked', 'undecided'];
-
-/** Голос из интерфейса → коллекция истории. */
-const CONTENT_VOTE_COLLECTIONS = [
-    'like' => 'liked',
-    'dislike' => 'disliked',
-    'maybe' => 'undecided',
-    'wrong' => 'complaints'
-];
+// Пул и история оценок, кэш медиа (media_cache/), файлы галерей, видео через ffmpeg, живость тредов в пуле.
 
 /** Запись однозначно определяется адресом своей картинки (у видео — превью). */
 function content_image_key($item) {
     if (!is_array($item)) return '';
-    if (!empty($item['image']) && is_string($item['image'])) return $item['image'];
-    $first = is_array($item['images'] ?? null) ? ($item['images'][0] ?? '') : '';
-    return is_string($first) ? $first : '';
+    $key = $item['image'] ?? (is_array($item['images'] ?? null) ? ($item['images'][0] ?? '') : '');
+    return is_string($key) ? $key : '';
 }
 
 function pool_find_item(array $pool, $image) {
-    foreach ($pool as $item) {
-        if (content_image_key($item) === $image) return $item;
-    }
+    foreach ($pool as $item) if (content_image_key($item) === $image) return $item;
     return null;
 }
 
-function pool_without_image(array $pool, $image) {
-    return array_values(array_filter($pool, function ($item) use ($image) {
-        return content_image_key($item) !== $image;
-    }));
-}
+function pool_without_image(array $pool, $image) { return array_values(array_filter($pool, fn($i) => content_image_key($i) !== $image)); }
 
-/** Отложенная запись уходит в конец очереди, порядок остальных не меняется. */
-function pool_move_image_to_end(array $pool, $image) {
-    $postponed = array_filter($pool, function ($item) use ($image) {
-        return content_image_key($item) === $image;
-    });
-    return array_values(array_merge(pool_without_image($pool, $image), $postponed));
-}
-
-/** Ключ источника записи: telegram:<канал>, vk:<паблик>, dvach:<доска>. */
 function content_source_key($item) {
-    if (!empty($item['source_key'])) return (string)$item['source_key'];
-    if (!empty($item['board'])) return 'dvach:' . $item['board'];
-    return 'source:' . mb_strtolower((string)($item['source'] ?? ''));
+    return (string)($item['source_key'] ?? '') ?: (!empty($item['board']) ? 'dvach:' . $item['board'] : 'source:' . mb_strtolower((string)($item['source'] ?? '')));
 }
 
-function content_history_record(array $item, $complaint_reason) {
-    return [
-        'image' => content_image_key($item),
-        'text' => (string)($item['text'] ?? ''),
-        'description' => $item['description'] ?? '',
-        'why_relevant' => $item['why_relevant'] ?? '',
-        'relevance' => $item['relevance'] ?? null,
-        'rating_assigned' => $item['rating'] ?? null,   // null — прогноза не было (персональный подбор выключен)
-        'topic' => $item['topic'] ?? '',
-        'source' => $item['source'] ?? '',
-        'source_key' => content_source_key($item),
-        'board' => $item['board'] ?? '',
-        'thread_id' => $item['thread_id'] ?? '',
-        'post_id' => $item['post_id'] ?? '',
-        'source_url' => source_post_url($item),
-        'posted_at' => $item['posted_at'] ?? 0,
-        'engagement' => $item['engagement'] ?? null,   // активность у площадки на момент парсинга (lib/engagement.php)
-        'complaint_reason' => $complaint_reason,
-        'video' => (string)($item['video'] ?? ''),            // медиа поста сохраняются для вкладки «Предложка»
-        'image_local' => (string)($item['image_local'] ?? ''),
-        'video_local' => (string)($item['video_local'] ?? ''),
-        'gallery' => content_gallery($item),
-        'timestamp' => time()
-    ];
-}
-
-/** Все медиафайлы поста [['image' => URL, 'video' => URL или '']]; пусто, если файл один. */
+/** Все файлы поста [['image', 'video', image_local?, video_local?]]; пусто, если файл один. */
 function content_gallery(array $item) {
     $gallery = [];
-    foreach (is_array($item['gallery'] ?? null) ? $item['gallery'] : [] as $file) {
-        if (!is_array($file) || !is_string($file['image'] ?? null) || $file['image'] === '') continue;
-        $entry = ['image' => $file['image'], 'video' => is_string($file['video'] ?? null) ? $file['video'] : ''];
-        foreach (['image_local', 'video_local'] as $field) if (is_string($file[$field] ?? null) && $file[$field] !== '') $entry[$field] = $file[$field];
-        $gallery[] = $entry;
+    foreach ((array)($item['gallery'] ?? []) as $f) {
+        if (!is_array($f) || !is_string($f['image'] ?? null) || $f['image'] === '') continue;
+        $gallery[] = ['image' => $f['image'], 'video' => is_string($f['video'] ?? null) ? $f['video'] : '']
+            + array_filter(array_intersect_key($f, ['image_local' => 1, 'video_local' => 1]), fn($v) => is_string($v) && $v !== '');
     }
     return count($gallery) > 1 ? $gallery : [];
 }
 
-/** Адрес картинки для браузера: сохранённая копия из кэша, если она есть, иначе исходная ссылка. */
-function content_display_image(array $item) {
-    return media_cache_existing($item['image_local'] ?? '') ?: content_image_key($item);
-}
-
-/**
- * Запись для карточки, с полями, которые ждёт интерфейс. display_image / display_video — что показывать
- * (копия из кэша или исходная ссылка); image и video — исходные адреса, запасной вариант при ошибке загрузки.
- * $upcoming — следующие записи пула: их картинки браузер подгрузит заранее.
- */
-function content_for_display(array $item, array $upcoming = []) {
-    $item['images'] = [content_image_key($item)];
-    $item['captions'] = [$item['captions'][0] ?? ($item['text'] ?? '')];
-    $item['source_url'] = source_post_url($item);
-    $main = content_image_key($item);
-    $item['gallery'] = array_map(function ($file) use ($item, $main) {   // что показывать (копия из кэша или исходная ссылка)
-        if ($file['image'] === $main) {   // главный файл записи: его копии лежат в самой записи (в галерее он может стоять не первым)
-            $file['image_local'] = $item['image_local'] ?? '';
-            $file['video_local'] = $item['video_local'] ?? '';
-        }
-        $file['display_image'] = media_cache_existing($file['image_local'] ?? '') ?: $file['image'];
-        $file['display_video'] = $file['video'] === '' ? '' : (media_cache_existing($file['video_local'] ?? '') ?: $file['video']);
-        return $file;
-    }, content_gallery($item));
-    if ($item['gallery'] && !in_array($main, array_column($item['gallery'], 'image'), true)) {   // главного файла в галерее нет (источник изменился): добавляем, чтобы он не пропал
-        array_unshift($item['gallery'], ['image' => $main, 'video' => (string)($item['video'] ?? ''), 'image_local' => $item['image_local'] ?? '', 'video_local' => $item['video_local'] ?? '',
-            'display_image' => content_display_image($item), 'display_video' => (string)(media_cache_existing($item['video_local'] ?? '') ?: ($item['video'] ?? ''))]);
-    }
-    $item['post_check'] = !empty($item['video']) || !empty($item['gallery']) ? telegram_preflight_item($item) : ['status' => 'ok', 'problems' => [], 'warnings' => [], 'bad' => []];
-    $item['display_image'] = content_display_image($item);
-    $item['display_video'] = media_cache_existing($item['video_local'] ?? '') ?: ($item['video'] ?? '');
-    $item['preload'] = array_values(array_filter(array_map('content_display_image', $upcoming)));
-    return $item;
+function content_history_record(array $item, $complaint_reason) {
+    return ['image' => content_image_key($item), 'text' => (string)($item['text'] ?? ''), 'description' => $item['description'] ?? '',
+        'why_relevant' => $item['why_relevant'] ?? '', 'relevance' => $item['relevance'] ?? null, 'rating_assigned' => $item['rating'] ?? null,
+        'topic' => $item['topic'] ?? '', 'source' => $item['source'] ?? '', 'source_key' => content_source_key($item), 'board' => $item['board'] ?? '',
+        'thread_id' => $item['thread_id'] ?? '', 'post_id' => $item['post_id'] ?? '', 'source_url' => source_post_url($item), 'posted_at' => $item['posted_at'] ?? 0,
+        'engagement' => $item['engagement'] ?? null, 'complaint_reason' => $complaint_reason, 'video' => (string)($item['video'] ?? ''),
+        'image_local' => (string)($item['image_local'] ?? ''), 'video_local' => (string)($item['video_local'] ?? ''), 'gallery' => content_gallery($item), 'timestamp' => time()];
 }
 
 /** Ссылка на исходный пост: сохранённая (только известные площадки по HTTPS) или собранная из полей Двача. */
 function source_post_url($item) {
-    $existing_url = (string)($item['source_url'] ?? '');
-    if (is_trusted_source_url($existing_url)) return $existing_url;
-
+    if (is_trusted_source_url($url = (string)($item['source_url'] ?? ''))) return $url;
     $board = (string)($item['board'] ?? '');
-    if ($board === '' && preg_match('~Двач\s+/([a-z0-9_-]+)/~iu', (string)($item['source'] ?? ''), $match)) {
-        $board = $match[1];
+    if ($board === '' && preg_match('~Двач\s+/([a-z0-9_-]+)/~iu', (string)($item['source'] ?? ''), $m)) $board = $m[1];
+    [$thread, $post] = [(string)($item['thread_id'] ?? ''), (string)($item['post_id'] ?? '')];
+    return is_valid_dvach_board($board) && is_valid_dvach_id($thread) && is_valid_dvach_id($post) ? dvach_post_url($board, $thread, $post) : '';
+}
+
+function post_item_has_video(array $item) {
+    return trim((string)($item['video'] ?? '')) !== '' || array_filter(content_gallery($item), fn($f) => trim($f['video']) !== '');
+}
+
+/** Запись для карточки: display_* — копия из кэша или исходная ссылка, preload — картинки следующих записей. */
+function content_for_display(array $item, array $upcoming = []) {
+    $main = content_image_key($item);
+    $display = fn($f) => $f + ['display_image' => media_cache_existing($f['image_local'] ?? '') ?: $f['image'],
+        'display_video' => $f['video'] === '' ? '' : (media_cache_existing($f['video_local'] ?? '') ?: $f['video'])];
+    $own = ['image' => $main, 'video' => (string)($item['video'] ?? ''), 'image_local' => $item['image_local'] ?? '', 'video_local' => $item['video_local'] ?? ''];
+    $gallery = array_map(fn($f) => $display($f['image'] === $main ? array_merge($f, array_intersect_key($own, ['image_local' => 1, 'video_local' => 1])) : $f), content_gallery($item));
+    if ($gallery && !in_array($main, array_column($gallery, 'image'), true)) array_unshift($gallery, $display($own));
+    $shown = $display($own);
+    return ['images' => [$main], 'captions' => [$item['captions'][0] ?? ($item['text'] ?? '')], 'source_url' => source_post_url($item), 'gallery' => $gallery,
+        'post_check' => !empty($item['video']) || $gallery ? telegram_preflight_item($item) : ['status' => 'ok', 'problems' => [], 'warnings' => [], 'bad' => []],
+        'display_image' => $shown['display_image'], 'display_video' => $shown['display_video'],
+        'preload' => array_values(array_filter(array_map(fn($i) => media_cache_existing($i['image_local'] ?? '') ?: content_image_key($i), $upcoming)))] + $item;
+}
+
+// ---- Кэш медиа: имя файла — хэш исходного адреса ----
+
+function media_cache_write($name, $bytes) {
+    if (!is_dir(MEDIA_CACHE_DIR) && !@mkdir(MEDIA_CACHE_DIR, 0755, true) && !is_dir(MEDIA_CACHE_DIR)) throw new RuntimeException('Не удалось создать каталог кэша медиа.');
+    $tmp = tempnam(MEDIA_CACHE_DIR, '.tmp-');
+    if ($tmp === false || file_put_contents($tmp, $bytes) !== strlen($bytes) || !@chmod($tmp, 0644) || !rename($tmp, MEDIA_CACHE_DIR . "/$name")) {
+        if ($tmp) @unlink($tmp);
+        throw new RuntimeException('Не удалось сохранить файл в кэш медиа.');
     }
-    $thread_id = (string)($item['thread_id'] ?? '');
-    $post_id = (string)($item['post_id'] ?? '');
-    if (!is_valid_dvach_board($board) || !is_valid_dvach_id($thread_id) || !is_valid_dvach_id($post_id)) {
-        return '';
+    return MEDIA_CACHE_URL . "/$name";
+}
+
+function media_cache_name($url, $ext) { return substr(hash('sha256', (string)$url), 0, 32) . ".$ext"; }
+
+function media_cache_store_image($url, $bytes) {
+    $info = is_string($bytes) && $bytes !== '' ? @getimagesizefromstring($bytes) : false;
+    $ext = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif', 'image/webp' => 'webp', 'image/bmp' => 'bmp'][$info['mime'] ?? ''] ?? null;
+    try { return $ext ? media_cache_write(media_cache_name($url, $ext), $bytes) : ''; } catch (Throwable $e) { error_log('Media cache: ' . $e->getMessage()); return ''; }
+}
+
+/** Видео в кэш: из уже скачанного файла или скачать заново. Перекодированное — всегда .mp4. */
+function media_cache_store_video($url, $file = null, $force_mp4 = false) {
+    $ext = strtolower(pathinfo((string)parse_url($url, PHP_URL_PATH), PATHINFO_EXTENSION));
+    if ($force_mp4 || !in_array($ext, ['mp4', 'webm'], true)) $ext = 'mp4';
+    $tmp = $file === null || !is_file($file) ? download_video_temp($url) : null;
+    if ($tmp === null && ($file === null || !is_file($file))) return '';
+    try {
+        $bytes = file_get_contents($tmp ?? $file);
+        return $bytes ? media_cache_write(media_cache_name($url, $ext), $bytes) : '';
+    } catch (Throwable $e) { error_log('Media cache: ' . $e->getMessage()); return ''; } finally { if ($tmp) @unlink($tmp); }
+}
+
+/** Скачанный ролик → браузерный вариант → кэш. Возвращает адрес для браузера или ''. */
+function cache_downloaded_video($url, $downloaded) {
+    $playable = browser_playable_video($downloaded);
+    $local = media_cache_store_video($url, $playable, $playable !== $downloaded);
+    if ($playable !== $downloaded) @unlink($playable);
+    return $local;
+}
+
+function media_cache_path($url) {
+    $prefix = MEDIA_CACHE_URL . '/';
+    return is_string($url) && str_starts_with($url, $prefix) && preg_match('/^[a-f0-9]{32}\.[a-z0-9]{2,5}$/', $name = substr($url, strlen($prefix))) ? MEDIA_CACHE_DIR . "/$name" : null;
+}
+
+function media_cache_existing($url) { return ($p = media_cache_path($url)) !== null && is_file($p) ? $url : ''; }
+
+function media_cache_item_urls($item) {
+    $urls = [];
+    foreach ([$item, ...(array)($item['gallery'] ?? [])] as $e) foreach (['image_local', 'video_local'] as $f) if (is_array($e) && ($u = (string)($e[$f] ?? '')) !== '') $urls[] = $u;
+    return $urls;
+}
+
+/** Удаляет файл, если он не показывается другому пользователю. */
+function media_cache_remove($url) {
+    foreach (all_users_pool_items(app_user_bind() ?: null) as $item) if (in_array($url, media_cache_item_urls($item), true)) return;
+    if (($p = media_cache_path($url)) !== null) @unlink($p);
+}
+
+/** Удаляет файлы, на которые не ссылается ни одна запись; свежие щадит, пока не $include_fresh. */
+function media_cache_cleanup(array $pool, $include_fresh = false) {
+    $keep = [];
+    foreach ($pool as $item) foreach (media_cache_item_urls($item) as $u) if ($p = media_cache_path($u)) $keep[basename($p)] = true;
+    $removed = 0;
+    foreach (is_dir(MEDIA_CACHE_DIR) ? scandir(MEDIA_CACHE_DIR) : [] as $name) {
+        $path = MEDIA_CACHE_DIR . "/$name";
+        if (isset($keep[$name]) || !is_file($path) || (!$include_fresh && time() - (int)@filemtime($path) < MEDIA_CACHE_GRACE_SECONDS)) continue;
+        $removed += (int)@unlink($path);
     }
-    return dvach_post_url($board, $thread_id, $post_id);
+    return $removed;
+}
+
+/** Файлы записей, которые были в $before и пропали из $after. */
+function media_cache_release_removed(array $before, array $after) {
+    $kept = array_flip(array_merge([], ...array_map('media_cache_item_urls', array_values($after))));
+    foreach ($before as $item) foreach (media_cache_item_urls($item) as $u) if (!isset($kept[$u])) media_cache_remove($u);
+}
+
+/** Очистка данных пользователя: пустые пул и история; каталог общий и остаётся. */
+function reset_project_data() {
+    update_data(pool_file(), [], fn() => []);
+    update_data(history_file(), empty_history(), fn() => empty_history());
+    return media_cache_cleanup(all_users_pool_items());
+}
+
+// ---- Галерея поста: остальные файлы — уменьшенными картинками и видео в H.264 ----
+
+const GALLERY_CACHE_MAX_FILES = 4;
+
+function gallery_prepare_image($bytes) {
+    $info = @getimagesizefromstring((string)$bytes);
+    if (!$info || $info['mime'] === 'image/gif' || (max($info[0], $info[1]) <= 1600 && strlen($bytes) <= 600 * 1024)) return $bytes;
+    $jpeg = image_shrink($bytes, 1600, 85, true);
+    return strlen($jpeg) < strlen($bytes) ? $jpeg : $bytes;
+}
+
+function gallery_download_image($url) {
+    $bytes = http_get($url, [CURLOPT_TIMEOUT => 20]);
+    return $bytes && strlen($bytes) <= MAX_IMAGE_BYTES ? $bytes : null;
+}
+
+/** Кэширует файлы галереи, кроме главного (он кэшируется вместе с записью). */
+function gallery_cache_files(array $gallery, $main_image = null) {
+    $done = 0;
+    foreach ($gallery as $i => $f) {
+        $is_main = $main_image !== null ? ($f['image'] ?? '') === $main_image : $i === 0;
+        if ($is_main || !empty($f['image_local']) || !empty($f['video_local']) || $done++ >= GALLERY_CACHE_MAX_FILES) continue;
+        if ($bytes = gallery_download_image($f['image'])) $gallery[$i]['image_local'] = media_cache_store_image($f['image'], gallery_prepare_image($bytes));
+        if (($f['video'] ?? '') !== '' && ($file = download_video_temp($f['video']))) {
+            $gallery[$i]['video_local'] = cache_downloaded_video($f['video'], $file);
+            @unlink($file);
+        }
+    }
+    return $gallery;
+}
+
+/** Догружает кэш галерей у записей пула, где его ещё нет (по нескольку за запуск). */
+function cache_pool_galleries($limit = 4) {
+    $todo = [];
+    foreach (load_data(pool_file(), []) as $item) {
+        $rest = array_slice((array)($item['gallery'] ?? []), 1);
+        if (!$rest || count($todo) >= $limit || array_filter($rest, fn($f) => !empty($f['image_local']) || !empty($f['video_local']))) continue;
+        $todo[content_image_key($item)] = gallery_cache_files($item['gallery'], content_image_key($item));
+    }
+    if (!$todo) return 0;
+    update_data(pool_file(), [], fn($pool) => array_map(fn($i) => isset($todo[$k = content_image_key($i)]) ? ['gallery' => $todo[$k]] + $i : $i, $pool));
+    cli_echo('Кэш галерей: обработано записей: ' . count($todo) . '.');
+    return count($todo);
+}
+
+// ---- Видео: загрузка, раскадровка, перекодирование для браузера ----
+
+function ffmpeg_binary() {
+    static $bin = null;
+    return $bin ??= function_exists('shell_exec') && function_exists('exec') ? trim((string)@shell_exec('command -v ffmpeg 2>/dev/null')) : '';
+}
+
+function ffprobe($path, $args) { return trim((string)@shell_exec("ffprobe -v error $args " . escapeshellarg($path) . ' 2>/dev/null')); }
+
+/** ffmpeg с аргументами; true — файл $out получился. */
+function ffmpeg_run($args, $out, $timeout = 0) {
+    exec(($timeout ? "timeout $timeout " : '') . escapeshellarg(ffmpeg_binary()) . " -v error -y $args " . escapeshellarg($out) . ' 2>/dev/null', $o, $code);
+    return $code === 0 && is_file($out) && filesize($out) > 0;
+}
+
+function download_video_temp($url, $max_bytes = VIDEO_MAX_BYTES) {
+    if (($path = tempnam(sys_get_temp_dir(), 'ct-video-')) === false || !($handle = @fopen($path, 'wb'))) { if ($path) @unlink($path); return null; }
+    $size = 0;
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 3, CURLOPT_CONNECTTIMEOUT => 8, CURLOPT_TIMEOUT => 90,
+        CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS, CURLOPT_USERAGENT => HTTP_UA,
+        CURLOPT_WRITEFUNCTION => function ($c, $chunk) use (&$size, $max_bytes, $handle) { return ($size += strlen($chunk)) > $max_bytes ? 0 : fwrite($handle, $chunk); }]);
+    $ok = curl_exec($ch) !== false && (int)curl_getinfo($ch, CURLINFO_HTTP_CODE) === 200;
+    curl_close($ch);
+    fclose($handle);
+    if ($ok && $size > 0) return $path;
+    @unlink($path);
+    return null;
+}
+
+/** Раскадровка: кадры в серединах равных отрезков (~раз в VIDEO_SECONDS_PER_FRAME с), уменьшенные до VIDEO_FRAME_MAX_SIDE. */
+function video_storyboard($path) {
+    if (ffmpeg_binary() === '' || !is_file($path)) return null;
+    $duration = max(0.0, (float)ffprobe($path, '-show_entries format=duration -of csv=p=0'));
+    $span = $duration > 0 ? $duration : VIDEO_FRAMES_MIN * VIDEO_SECONDS_PER_FRAME;
+    $count = max(VIDEO_FRAMES_MIN, min(VIDEO_FRAMES_MAX, (int)round($span / VIDEO_SECONDS_PER_FRAME)));
+    $s = VIDEO_FRAME_MAX_SIDE;
+    $frames = $times = [];
+    for ($i = 0; $i < $count; $i++) {
+        $at = round($span * ($i + 0.5) / $count, 2);
+        if (($out = tempnam(sys_get_temp_dir(), 'ct-frame-')) === false) break;
+        $ok = ffmpeg_run(sprintf('-ss %.2F -i ', $at) . escapeshellarg($path) . ' -frames:v 1 -vf ' . escapeshellarg("scale='if(gt(iw,ih),$s,-2)':'if(gt(iw,ih),-2,$s)'") . ' -q:v 4 -f image2', $out);
+        if ($ok) { $frames[] = file_get_contents($out); $times[] = $at; }
+        @unlink($out);
+    }
+    return $frames ? ['frames' => $frames, 'timestamps' => $times, 'duration' => $duration] : null;
+}
+
+/** Видео для модели: frames, timestamps, duration, file (скачанный ролик удаляет вызывающий). Не вышло — по превью. */
+function video_analysis_input($url, $poster) {
+    $poster_only = ['frames' => [$poster], 'timestamps' => [], 'duration' => 0.0, 'file' => null];
+    if (ffmpeg_binary() === '') { cli_echo('-> ffmpeg не найден на сервере, кадры видео не извлекаются; анализирую превью.'); return $poster_only; }
+    if (($path = download_video_temp($url)) === null) { cli_echo('-> Видео не скачалось (размер или ошибка сети), анализирую превью.'); return $poster_only; }
+    if (!($board = video_storyboard($path))) { cli_echo('-> Кадры видео не извлечены, анализирую превью.'); return ['file' => $path] + $poster_only; }
+    cli_echo('-> Раскадровка: ' . count($board['frames']) . ' кадров из видео длиной ' . format_video_time($board['duration']) . '.');
+    return $board + ['file' => $path];
+}
+
+/** Индекс moov в начале MP4: браузер играет, не скачав файл целиком. */
+function mp4_has_fast_start($path) {
+    if (!($h = @fopen($path, 'rb'))) return true;
+    for ($offset = 0, $size = filesize($path); $offset + 8 <= $size;) {
+        fseek($h, $offset);
+        if (strlen($head = fread($h, 16)) < 8) break;
+        $type = substr($head, 4, 4);
+        if ($type === 'moov' || $type === 'mdat') { fclose($h); return $type === 'moov'; }
+        $atom = unpack('N', $head)[1];
+        if ($atom === 1 && strlen($head) >= 16) $atom = unpack('J', substr($head, 8, 8))[1];
+        if ($atom < 8) break;
+        $offset += $atom;
+    }
+    fclose($h);
+    return true;
+}
+
+/**
+ * Ролик для браузера: кодек, который все играют (иначе H.264), не тяжелее VIDEO_LIGHT_BYTES и не выше 720p (иначе пережать),
+ * MP4 с быстрым стартом (иначе переупаковать). Возвращает исходный путь или новый временный файл.
+ */
+function browser_playable_video($path) {
+    if (ffmpeg_binary() === '' || !is_file($path)) return $path;
+    $codec = strtolower(ffprobe($path, '-select_streams v:0 -show_entries stream=codec_name -of csv=p=0'));
+    $unplayable = $codec !== '' && !in_array($codec, ['h264', 'vp8', 'vp9', 'av1'], true);
+    $sides = array_filter(array_map('intval', explode(',', ffprobe($path, '-select_streams v:0 -show_entries stream=width,height -of csv=p=0'))));
+    $heavy = filesize($path) > VIDEO_LIGHT_BYTES || ($sides && min($sides) > VIDEO_LIGHT_HEIGHT);
+    $slow = (string)@file_get_contents($path, false, null, 4, 4) === 'ftyp' && !mp4_has_fast_start($path);
+    if ((!$unplayable && !$heavy && !$slow) || ($out = tempnam(sys_get_temp_dir(), 'ct-h264-')) === false) return $path;
+    $in = '-i ' . escapeshellarg($path);
+    if ($unplayable || $heavy) {
+        cli_echo('-> Видео ' . ($unplayable ? "в кодеке {$codec}: браузер его может не воспроизвести" : 'тяжёлое (' . round(filesize($path) / 1048576, 1) . ' МБ)') . ' — перекодирую в H.264 до ' . VIDEO_LIGHT_HEIGHT . 'p...');
+        $h = VIDEO_LIGHT_HEIGHT;
+        $ok = ffmpeg_run("$in -map 0:v:0 -map 0:a:0? -vf \"scale='if(gt(iw,ih),-2,min($h,iw))':'if(gt(iw,ih),min($h,ih),-2)'\" -c:v libx264 -preset veryfast -crf 27 -pix_fmt yuv420p -c:a aac -b:a 96k -movflags +faststart -f mp4", $out);
+    } else {
+        $ok = ffmpeg_run("$in -map 0 -c copy -movflags +faststart -f mp4", $out);
+    }
+    if ($ok && !($heavy && !$unplayable && filesize($out) >= filesize($path))) return $out;
+    @unlink($out);
+    if ($unplayable) cli_echo('-> Перекодировать не удалось, сохраняю как есть.');
+    return $path;
+}
+
+// ---- Живость тредов Двача у записей пула ----
+
+/** Убирает записи удалённых тредов и удалённых постов. Раз в POOL_LIVENESS_INTERVAL; null — ещё рано. */
+function prune_dead_pool_items($uid = null, $dry_run = false, $force = false, $log = true) {
+    $marker = user_dir($uid) . '/threads-checked';
+    if (!$force && time() - (int)@filemtime($marker) < POOL_LIVENESS_INTERVAL) return null;
+    $pool = load_data(pool_file($uid), []);
+    $threads = [];
+    foreach ($pool as $i) if (!empty($i['board']) && !empty($i['thread_id'])) $threads["{$i['board']}/{$i['thread_id']}"] = [$i['board'], $i['thread_id']];
+    $states = dvach_threads_liveness(array_slice($threads, 0, POOL_LIVENESS_MAX_THREADS, true));
+    $removed = [];
+    $mutator = function ($pool) use ($states, &$removed) {
+        $kept = [];
+        foreach ($pool as $i) dvach_item_gone($i, $states) ? $removed[] = $i : $kept[] = $i;
+        return $removed ? $kept : null;
+    };
+    if ($dry_run) $mutator($pool);
+    else {
+        $after = update_data(pool_file($uid), [], $mutator);
+        if ($removed) media_cache_release_removed($pool, $after);
+        @touch($marker);
+    }
+    $r = ['threads' => count($states), 'gone' => count(array_filter($states, fn($s) => $s === false)), 'removed' => count($removed)];
+    if ($log && $removed) cli_echo("Проверка тредов: проверено {$r['threads']}, удалённых тредов {$r['gone']}, убрано записей из пула: {$r['removed']}.");
+    return $r;
+}
+
+/** [ключ треда => false (удалён) | [номер поста => true] (жив) | null (неизвестно)]. */
+function dvach_threads_liveness(array $threads) {
+    $states = [];
+    foreach ($threads as $key => [$board, $thread]) {
+        $state = dvach_thread_state($board, $thread, $posts);
+        $states[$key] = $state === 'gone' ? false : ($state === 'alive' ? array_fill_keys(array_map(fn($p) => (string)($p['num'] ?? ''), $posts), true) : null);
+        usleep(300000);
+    }
+    return $states;
+}
+
+function dvach_item_gone(array $item, array $states) {
+    $s = $states[($item['board'] ?? '') . '/' . ($item['thread_id'] ?? '')] ?? null;
+    return $s === false || (is_array($s) && !empty($item['post_id']) && !isset($s[(string)$item['post_id']]));
 }

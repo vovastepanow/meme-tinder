@@ -1,547 +1,431 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Postmaker — ИИ-подборщик контента</title>
-    <link rel="icon" href="img/logo.svg" type="image/svg+xml">
-    <link rel="icon" href="img/favicon-32.png" sizes="32x32" type="image/png">
-    <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
-    <meta name="theme-color" content="#0b0b0c">
-    <link rel="preload" href="fonts/GolosText-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="css/fonts.css">
-    <link rel="stylesheet" href="css/main-layout.css">
-    <link rel="stylesheet" href="css/components.css">
-    <link rel="stylesheet" href="css/overlays.css">
-    <link rel="stylesheet" href="css/post-editor.css">
-    <link rel="stylesheet" href="css/proposals.css">
-    <link rel="stylesheet" href="css/tree.css">
-    <link rel="stylesheet" href="css/control.css">
-    <link rel="stylesheet" href="css/datetime-picker.css">
-    <link rel="stylesheet" href="css/spinner.css">
-    <script type="module" src="js/main.js"></script>
-    <script>setTimeout(function () { var o = document.getElementById("app-loading"); if (o) o.classList.add("is-done"); }, 20000);</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Postmaker</title>
+<link rel="icon" href="img/logo.svg" type="image/svg+xml">
+<link rel="icon" href="img/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta name="theme-color" content="#0b0b0c">
+<link rel="preload" href="fonts/GolosText-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/app.css">
+<script type="module" src="js/main.js"></script>
+<script>setTimeout(() => document.getElementById('app-loading')?.classList.add('is-done'), 20000);</script>
 </head>
 <body>
-    <div id="app-loading" class="app-loading" role="status" aria-label="Загрузка приложения"><span class="spinner spinner-lg"></span></div>
+<div id="app-loading" class="app-loading" role="status" aria-label="Загрузка приложения"><span class="spinner spinner-lg"></span></div>
 
-    <section id="activity-console" class="activity-console" aria-label="Журнал приложения">
-        <div class="activity-console-header"><span class="console-indicator"></span><strong>Журнал</strong><span id="activity-console-status">готово</span><button id="activity-console-follow" class="activity-console-follow" type="button" hidden>К концу ↓</button></div>
-        <div id="activity-track" class="activity-console-output" role="log" aria-live="polite"></div>
-        <details id="model-panel" class="model-panel">
-            <summary><span class="model-panel-title">Модель</span><span id="model-summary">…</span></summary>
-            <div class="model-panel-body">
-                <div id="model-gpu" class="model-panel-line"></div>
-                <ul id="model-loaded" class="model-loaded"></ul>
-                <div class="model-panel-actions">
-                    <button type="button" data-model-op="load" data-role="prescreen">Загрузить быструю</button>
-                    <button type="button" data-model-op="load" data-role="analysis">Загрузить основную</button>
-                    <button type="button" data-model-op="restart">Перезапустить</button>
-                    <button type="button" data-model-op="unload_all">Выгрузить все</button>
-                </div>
-                <div id="model-panel-note" class="model-panel-line model-panel-note"></div>
-            </div>
-        </details>
-    </section>
-
-    <div id="tab-inactive" class="tab-inactive-bar" role="alert" hidden>
-        <span>Приложение открыто в другой вкладке: поиск и обновления идут там, эта вкладка неактивна.</span>
-        <button id="tab-inactive-reload" type="button">Работать здесь</button>
+<section id="activity-console" class="activity-console" aria-label="Журнал приложения">
+  <div class="activity-console-header"><span class="console-indicator"></span><strong>Журнал</strong><span id="activity-console-status">готово</span><button id="debug-toggle" class="debug-toggle" type="button" aria-pressed="false">🐞 Демо</button><button id="activity-console-follow" class="activity-console-follow" type="button" hidden>К концу ↓</button></div>
+  <div id="activity-track" class="activity-console-output" role="log" aria-live="polite"></div>
+  <details id="model-panel" class="model-panel">
+    <summary><span class="model-panel-title">Модель</span><span id="model-summary">…</span></summary>
+    <div class="model-panel-body">
+      <div id="model-gpu" class="model-panel-line"></div>
+      <ul id="model-loaded" class="model-loaded"></ul>
+      <div class="model-panel-actions">
+        <button type="button" data-model-op="load" data-role="prescreen">Загрузить быструю</button>
+        <button type="button" data-model-op="load" data-role="analysis">Загрузить основную</button>
+        <button type="button" data-model-op="restart">Перезапустить</button>
+        <button type="button" data-model-op="unload_all">Выгрузить все</button>
+      </div>
+      <div id="model-panel-note" class="model-panel-line model-panel-note"></div>
     </div>
+  </details>
+</section>
 
-    <main class="app-main">
-    <div class="app-top">
-        <header class="app-brand">
-            <img class="app-brand-logo" src="img/logo-mark.svg" alt="" width="38" height="44">
-            <span class="app-brand-name">Postmaker</span>
-        </header>
-        <nav class="tabs" role="tablist">
-            <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-tab="content-tab">Подбор</button>
-            <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="proposals-tab">Предложка</button>
-            <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="source-tab">Источники</button>
-            <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="tree-tab">🌳 Дерево</button>
-            <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="test-tab">Тест ИИ</button>
-            <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="account-tab">Личный кабинет</button>
-        </nav>
+<div id="tab-inactive" class="tab-inactive-bar" role="alert" hidden>
+  <span>Приложение открыто в другой вкладке: поиск и обновления идут там, эта вкладка неактивна.</span>
+  <button id="tab-inactive-reload" type="button">Работать здесь</button>
+</div>
+
+<main class="app-main">
+<div class="app-top">
+  <header class="app-brand">
+    <img class="app-brand-logo" src="img/logo-mark.svg" alt="" width="38" height="44">
+    <span class="app-brand-name">Postmaker</span>
+  </header>
+  <nav class="tabs" role="tablist">
+    <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-tab="content-tab">Подбор</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="proposals-tab">Предложка</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="source-tab">Источники</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="tree-tab">🌳 Дерево</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="test-tab">Тест ИИ</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" data-tab="account-tab">Личный кабинет</button>
+  </nav>
+</div>
+
+<div id="debug-banner" class="debug-banner" hidden>
+  <span>ДЕМО-РЕЖИМ: данные хранятся только в этой сессии и не сохраняются в файлы проекта</span>
+  <button id="debug-reset-button" type="button">Сбросить демо</button>
+</div>
+
+<!-- Панель управления: справа на всех вкладках -->
+<div id="control-dock" class="controls control-dock" role="group" aria-label="Управление приложением">
+  <button id="control-search" class="btn" type="button" aria-label="Искать контент" title="Искать контент: поиск новых записей по теме"><span class="btn-icon" aria-hidden="true">🔍</span></button>
+  <button id="control-sources" class="btn" type="button" aria-label="Обновить базу источников" title="Обновить базу источников: автоподбор каналов, пабликов и досок"><span class="btn-icon" aria-hidden="true">📚</span></button>
+  <button id="control-stop" class="btn btn-danger" type="button" aria-label="Остановить приложение" title="Остановить приложение: завершить все процессы (сборщики, помощник Telegram, модели)"><span class="btn-icon" aria-hidden="true">🛑</span></button>
+</div>
+
+<!-- ПОДБОР -->
+<div id="content-tab" class="view-panel active">
+  <form id="topic-form" class="topic-form">
+    <label for="topic-input">Тема поиска</label>
+    <div class="topic-row">
+      <input id="topic-input" type="text" maxlength="200" list="topic-options" placeholder="Например: котики, космос, ретро-автомобили" autocomplete="off" required>
+      <datalist id="topic-options"></datalist>
+      <button id="topic-save" type="submit">Сохранить</button>
     </div>
-
-    <div id="debug-banner" class="debug-banner" hidden>
-        <span>ДЕМО-РЕЖИМ: данные хранятся только в этой сессии и не сохраняются в файлы проекта</span>
-        <button id="debug-reset-button" type="button">Сбросить демо</button>
+    <div id="topic2-field" class="topic2-field">
+      <span class="topic2-plus" aria-hidden="true">+</span>
+      <input id="topic2-input" type="text" maxlength="200" list="topic-options" placeholder="вторая тема: поиск по двум сразу" autocomplete="off" readonly aria-label="Вторая тема: контент ищется по обеим темам">
     </div>
-
-    <!-- ПАНЕЛЬ УПРАВЛЕНИЯ ПРИЛОЖЕНИЕМ: закреплена справа на всех вкладках, такой же блок кнопок, как панель оценок (control.js) -->
-    <div id="control-dock" class="controls control-dock" role="group" aria-label="Управление приложением">
-        <button id="control-search" class="btn" type="button" aria-label="Искать контент" title="Искать контент: поиск новых записей по теме"><span class="btn-icon" aria-hidden="true">🔍</span></button>
-        <button id="control-sources" class="btn" type="button" aria-label="Обновить базу источников" title="Обновить базу источников: автоподбор каналов, пабликов и досок"><span class="btn-icon" aria-hidden="true">📚</span></button>
-        <button id="control-stop" class="btn btn-danger" type="button" aria-label="Остановить приложение" title="Остановить приложение: завершить все процессы (сборщики, помощник Telegram, модели)"><span class="btn-icon" aria-hidden="true">🛑</span></button>
+    <div id="topic-notice" class="topic-notice" role="status" hidden><span id="topic-notice-text"></span><button id="topic-force-new" class="topic-link" type="button">Нет, это другая тема</button></div>
+    <div class="filter-row" role="group" aria-label="Фильтры подбора">
+      <label class="check-chip" title="Только посты за последние сутки"><input id="filter-fresh" type="checkbox"><span class="check-box" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span><span>Только новый контент</span></label>
+      <label class="check-chip" title="Только живые паблики, каналы и треды: пропускать те, где давно или редко публикуют"><input id="filter-active" type="checkbox" checked><span class="check-box" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span><span>Только актуальные источники</span></label>
+      <label class="check-chip" title="Показывать посты, в которых есть хотя бы одно видео"><input id="filter-video" type="checkbox"><span class="check-box" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span><span>Только с видео</span></label>
     </div>
+  </form>
 
-    <!-- ВКЛАДКА 1: ПОДБОР -->
-    <div id="content-tab" class="view-panel active">
-        <form id="topic-form" class="topic-form">
-            <label for="topic-input">Тема поиска</label>
-            <div class="topic-row">
-                <input id="topic-input" type="text" maxlength="200" list="topic-options" placeholder="Например: котики, космос, ретро-автомобили" autocomplete="off" required>
-                <datalist id="topic-options"></datalist>
-                <button id="topic-save" type="submit">Сохранить</button>
-            </div>
-            <!-- Вторая тема: неактивное поле, активируется кликом и деактивируется кликом в другом месте (content.js) -->
-            <div id="topic2-field" class="topic2-field">
-                <span class="topic2-plus" aria-hidden="true">+</span>
-                <input id="topic2-input" type="text" maxlength="200" list="topic-options" placeholder="вторая тема: поиск по двум сразу" autocomplete="off" readonly aria-label="Вторая тема: контент ищется по обеим темам">
-            </div>
-            <div id="topic-notice" class="topic-notice" role="status" hidden>
-                <span id="topic-notice-text"></span>
-                <button id="topic-force-new" class="topic-link" type="button">Нет, это другая тема</button>
-            </div>
-            <div class="filter-row" role="group" aria-label="Фильтры подбора">
-                <label class="check-chip" title="Только посты за последние сутки">
-                    <input id="filter-fresh" type="checkbox">
-                    <span class="check-box" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
-                    <span>Только новый контент</span>
-                </label>
-                <label class="check-chip" title="Только живые паблики, каналы и треды: пропускать те, где давно или редко публикуют">
-                    <input id="filter-active" type="checkbox" checked>
-                    <span class="check-box" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
-                    <span>Только актуальные источники</span>
-                </label>
-                <label class="check-chip" title="Показывать посты, в которых есть хотя бы одно видео">
-                    <input id="filter-video" type="checkbox">
-                    <span class="check-box" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
-                    <span>Только с видео</span>
-                </label>
-            </div>
-        </form>
+  <div id="item-loading" class="status-msg is-loading">Загрузка…</div>
+  <div id="item-searching" class="status-msg is-loading" role="status" hidden></div>
+  <div id="item-error" class="status-msg error-msg" role="alert" hidden></div>
 
-        <div id="item-loading" class="status-msg is-loading">Загрузка…</div>
-        <div id="item-searching" class="status-msg is-loading" role="status" hidden></div>
-        <div id="item-error" class="status-msg error-msg" role="alert" hidden></div>
-
-        <div id="item-card-wrapper" class="item-card-wrapper" hidden>
-            <div class="card">
-                <div class="media-shell">
-                    <button id="carousel-prev" class="carousel-btn" type="button" aria-label="Предыдущая картинка">‹</button>
-                    <div class="img-wrap">
-                        <img id="item-image" alt="Запись" hidden>
-                        <video id="item-video" class="card-video" muted loop autoplay playsinline preload="auto" aria-label="Видео: нажмите, чтобы смотреть со звуком" hidden></video>
-                        <span id="item-video-mark" class="video-mark" title="Видео: клик откроет со звуком" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="13" height="12" rx="3" fill="currentColor"/><path d="M16.5 10.2 21 7.6v8.8l-4.5-2.6z" fill="currentColor"/></svg></span>
-                        <div id="item-media-fallback" class="media-fallback" hidden>Картинка недоступна: источник удалил файл или ссылка устарела.</div>
-                    </div>
-                    <button id="carousel-next" class="carousel-btn" type="button" aria-label="Следующая картинка">›</button>
-                </div>
-                <div class="slide-caption">
-                    <span id="item-slide-caption"></span>
-                    <span id="item-slide-position" class="slide-position"></span>
-                </div>
-                <div class="info">
-                    <span id="item-rating" class="badge">0%</span>
-                    <div id="item-source" class="source-text">Источник: —</div>
-                    <div id="item-date" class="source-text" hidden></div>
-                    <div id="item-engagement" class="engagement-row" aria-label="Активность у источника" hidden></div>
-                    <a id="item-source-link" class="source-post-link" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a>
-                    <span id="item-relevance" class="relevance-badge">По теме: —</span>
-                    <div class="item-ai-note"><strong>Почему по теме:</strong> <span id="item-why-text"></span></div>
-                    <div id="item-desc" class="desc-text"><strong>Описание ИИ:</strong> —</div>
-                </div>
-            </div>
-            <div class="controls" role="group" aria-label="Оценка записи">
-                <div class="controls-row controls-votes">
-                    <button class="btn btn-main" type="button" data-vote="dislike" aria-label="Не нравится" title="Не нравится"><span class="btn-icon" aria-hidden="true">💩</span></button>
-                    <button class="btn" type="button" data-vote="postpone" aria-label="Отложить" title="Отложить"><span class="btn-icon" aria-hidden="true">✋</span></button>
-                    <button class="btn" type="button" data-vote="maybe" aria-label="Не знаю" title="Не знаю"><span class="btn-icon" aria-hidden="true">🤷</span></button>
-                    <button class="btn btn-main" type="button" data-vote="like" aria-label="Нравится" title="Нравится"><span class="btn-icon" aria-hidden="true">🗿</span></button>
-                </div>
-                <div class="controls-row controls-actions">
-                    <div class="complaint-wrap">
-                        <button id="complaint-button" class="btn btn-mini" type="button" aria-label="Пожаловаться" title="Пожаловаться" aria-haspopup="menu" aria-expanded="false"><span class="btn-icon" aria-hidden="true">🚩</span></button>
-                        <div id="complaint-menu" class="complaint-menu" role="menu" hidden>
-                            <button type="button" role="menuitem" data-reason="match_error">Ошибка подбора</button>
-                            <button type="button" role="menuitem" data-reason="broken">Сломано: не грузится, обрезано, битый пост</button>
-                            <button type="button" role="menuitem" data-reason="other">Другое</button>
-                        </div>
-                    </div>
-                    <div class="rocket-wrap">
-                        <button id="item-rocket" class="btn btn-mini" type="button" aria-label="Запостить в свой канал или паблик" title="Запостить" aria-haspopup="dialog" aria-expanded="false"><span class="btn-icon" aria-hidden="true">🚀</span></button>
-                        <form id="post-panel" class="post-panel" role="dialog" aria-label="Публикация" hidden>
-                            <label class="post-field">
-                                <span>Куда постим</span>
-                                <select id="post-target">
-                                    <option value="" disabled selected>Выберите источник…</option>
-                                    <optgroup label="Telegram">
-                                        <option value="tg:main">Мой канал в Telegram</option>
-                                    </optgroup>
-                                    <optgroup label="VK">
-                                        <option value="vk:main">Мой паблик VK</option>
-                                    </optgroup>
-                                </select>
-                            </label>
-                            <div class="post-field">
-                                <span id="post-when-label">Когда опубликовать</span>
-                                <button type="button" id="post-when" class="post-when" aria-haspopup="dialog" aria-labelledby="post-when-label post-when">Сразу</button>
-                            </div>
-                            <button type="submit" id="post-submit" class="post-submit">Запостить</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
+  <div id="item-card-wrapper" class="item-card-wrapper" hidden>
+    <div class="card">
+      <div class="media-shell">
+        <button id="carousel-prev" class="carousel-btn" type="button" aria-label="Предыдущая картинка">‹</button>
+        <div class="img-wrap">
+          <img id="item-image" alt="Запись" hidden>
+          <video id="item-video" class="card-video" muted loop autoplay playsinline preload="auto" aria-label="Видео: нажмите, чтобы смотреть со звуком" hidden></video>
+          <span id="item-video-mark" class="video-mark" title="Видео: клик откроет со звуком" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="13" height="12" rx="3" fill="currentColor"/><path d="M16.5 10.2 21 7.6v8.8l-4.5-2.6z" fill="currentColor"/></svg></span>
+          <div id="item-media-fallback" class="media-fallback" hidden>Картинка недоступна: источник удалил файл или ссылка устарела.</div>
         </div>
-
-        <div id="item-empty" class="status-msg item-empty" hidden>
-            <span id="item-empty-message">Пул контента пуст.</span>
-            <div class="item-empty-actions">
-                <button id="item-search-button" class="primary-button" type="button">Найти контент</button>
-                <button id="item-add-button" class="secondary-button" type="button">Добавить вручную</button>
-            </div>
-        </div>
+        <button id="carousel-next" class="carousel-btn" type="button" aria-label="Следующая картинка">›</button>
+      </div>
+      <div class="slide-caption"><span id="item-slide-caption"></span><span id="item-slide-position" class="slide-position"></span></div>
+      <div class="info">
+        <span id="item-rating" class="badge">0%</span>
+        <div id="item-source" class="source-text">Источник: —</div>
+        <div id="item-date" class="source-text" hidden></div>
+        <div id="item-engagement" class="engagement-row" aria-label="Активность у источника" hidden></div>
+        <a id="item-source-link" class="source-post-link" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a>
+        <span id="item-relevance" class="relevance-badge">По теме: —</span>
+        <div class="item-ai-note"><strong>Почему по теме:</strong> <span id="item-why-text"></span></div>
+        <div id="item-desc" class="desc-text"><strong>Описание ИИ:</strong> —</div>
+      </div>
     </div>
-
-    <!-- ВКЛАДКА 2: ПОДБОР ИСТОЧНИКОВ -->
-    <div id="proposals-tab" class="view-panel proposals-panel">
-        <div class="proposals-toolbar">
-            <div class="proposals-filters" role="group" aria-label="Фильтр">
-                <button type="button" class="proposals-filter active" data-proposal-filter="all">Все</button>
-                <button type="button" class="proposals-filter" data-proposal-filter="liked">🗿 Нравится</button>
-                <button type="button" class="proposals-filter" data-proposal-filter="undecided">🤷 Не знаю</button>
-            </div>
-            <span id="proposals-count" class="proposals-count"></span>
-            <button id="proposals-refresh" class="database-refresh" type="button" aria-label="Обновить список">↻</button>
+    <div class="controls" role="group" aria-label="Оценка записи">
+      <div class="controls-row">
+        <button class="btn btn-main" type="button" data-vote="dislike" aria-label="Не нравится" title="Не нравится"><span class="btn-icon" aria-hidden="true">💩</span></button>
+        <button class="btn" type="button" data-vote="postpone" aria-label="Отложить" title="Отложить"><span class="btn-icon" aria-hidden="true">✋</span></button>
+        <button class="btn" type="button" data-vote="maybe" aria-label="Не знаю" title="Не знаю"><span class="btn-icon" aria-hidden="true">🤷</span></button>
+        <button class="btn btn-main" type="button" data-vote="like" aria-label="Нравится" title="Нравится"><span class="btn-icon" aria-hidden="true">🗿</span></button>
+      </div>
+      <div class="controls-row controls-actions">
+        <div class="complaint-wrap">
+          <button id="complaint-button" class="btn btn-mini" type="button" aria-label="Пожаловаться" title="Пожаловаться" aria-haspopup="menu" aria-expanded="false"><span class="btn-icon" aria-hidden="true">🚩</span></button>
+          <div id="complaint-menu" class="complaint-menu" role="menu" hidden>
+            <button type="button" role="menuitem" data-reason="match_error">Ошибка подбора</button>
+            <button type="button" role="menuitem" data-reason="broken">Сломано: не грузится, обрезано, битый пост</button>
+            <button type="button" role="menuitem" data-reason="other">Другое</button>
+          </div>
         </div>
-        <div id="proposals-status" class="proposals-status" role="status"></div>
-        <div id="proposals-grid" class="proposals-grid"></div>
-    </div>
-
-    <div id="source-tab" class="view-panel">
-        <section class="discovery-panel" aria-label="Автоподбор источников">
-            <div class="discovery-text">
-                <strong>Автоподбор по теме</strong>
-                <span id="discovery-status">Загружаю сведения…</span>
-            </div>
-            <button id="discovery-button" class="primary-button" type="button">Подобрать источники</button>
-        </section>
-        <div class="source-actions">
-            <label class="source-platform-filter" for="source-platform">
-                <span>Платформа</span>
-                <select id="source-platform">
-                    <option value="any">Все источники</option>
-                    <option value="telegram">Telegram</option>
-                    <option value="vk">ВКонтакте</option>
-                    <option value="dvach">Двач</option>
-                </select>
+        <div class="rocket-wrap">
+          <button id="item-rocket" class="btn btn-mini" type="button" aria-label="Запостить в свой канал или паблик" title="Запостить" aria-haspopup="dialog" aria-expanded="false"><span class="btn-icon" aria-hidden="true">🚀</span></button>
+          <form id="post-panel" class="post-panel" role="dialog" aria-label="Публикация" hidden>
+            <label class="post-field"><span>Куда постим</span>
+              <select id="post-target">
+                <option value="" disabled selected>Выберите источник…</option>
+                <optgroup label="Telegram"><option value="tg:main">Мой канал в Telegram</option></optgroup>
+                <optgroup label="VK"><option value="vk:main">Мой паблик VK</option></optgroup>
+              </select>
             </label>
+            <div class="post-field"><span id="post-when-label">Когда опубликовать</span><button type="button" id="post-when" class="post-when" aria-haspopup="dialog" aria-labelledby="post-when-label post-when">Сразу</button></div>
+            <button type="submit" class="post-submit">Запостить</button>
+          </form>
         </div>
-        <div id="source-loading" class="status-msg is-loading" role="status">Ищу источники…</div>
-        <div id="source-error" class="status-msg error-msg" role="alert" hidden></div>
-
-        <!-- Карточка источника: тот же формат, что у записи на вкладке «Подбор» (sources.js) -->
-        <div id="source-card-wrapper" class="item-card-wrapper" hidden>
-            <div class="card">
-                <div class="media-shell">
-                    <!-- Мозаика из 6 свежих медиафайлов источника: плитки занимают весь контейнер с зазором 2 px (sources.js) -->
-                    <div id="source-grid" class="source-grid" aria-label="Свежие посты источника"></div>
-                    <div id="source-media-fallback" class="media-fallback" hidden>Картинки источника недоступны.</div>
-                </div>
-                <div class="info">
-                    <span id="source-score" class="badge" title="Оценка автоподбора: по теме, аудитория, доля просмотров" hidden></span>
-                    <div id="source-name" class="source-text">Источник: —</div>
-                    <div id="source-platform-label" class="source-text"></div>
-                    <div id="source-stats" class="engagement-row" aria-label="Аудитория и активность источника" hidden></div>
-                    <a id="source-link" class="source-post-link" target="_blank" rel="noopener noreferrer" hidden>Открыть источник ↗</a>
-                    <div class="item-ai-note"><strong>Почему показан:</strong> <span id="source-why"></span></div>
-                    <div id="source-desc" class="desc-text" hidden></div>
-                </div>
-            </div>
-            <div class="controls" role="group" aria-label="Решение по источнику">
-                <div class="controls-row controls-votes">
-                    <button class="btn btn-main" type="button" data-source-vote="reject" aria-label="Не нравится" title="Не нравится: убрать из подбора"><span class="btn-icon" aria-hidden="true">💩</span></button>
-                    <button class="btn" type="button" data-source-vote="postpone" aria-label="Отложить" title="Отложить: показать позже"><span class="btn-icon" aria-hidden="true">✋</span></button>
-                    <button class="btn" type="button" data-source-vote="maybe" aria-label="Не знаю" title="Не знаю: решение записано, источник не добавляется"><span class="btn-icon" aria-hidden="true">🤷</span></button>
-                    <button class="btn btn-main" type="button" data-source-vote="approve" aria-label="Нравится" title="Нравится: добавить в источники парсера"><span class="btn-icon" aria-hidden="true">🗿</span></button>
-                </div>
-                <div class="controls-row controls-actions">
-                    <div class="complaint-wrap">
-                        <button id="source-complaint-button" class="btn btn-mini" type="button" aria-label="Пожаловаться" title="Пожаловаться" aria-haspopup="menu" aria-expanded="false"><span class="btn-icon" aria-hidden="true">🚩</span></button>
-                        <div id="source-complaint-menu" class="complaint-menu" role="menu" hidden>
-                            <button type="button" role="menuitem" data-source-reason="off_topic">Не по теме</button>
-                            <button type="button" role="menuitem" data-source-reason="dead">Мёртвый: нет постов, не смотрят</button>
-                            <button type="button" role="menuitem" data-source-reason="other">Другое</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div id="source-empty" class="status-msg item-empty" hidden>
-            <span id="source-empty-message">Новых источников пока нет.</span>
-            <div class="item-empty-actions">
-                <button id="source-empty-discover" class="primary-button" type="button">Подобрать источники</button>
-                <button id="source-empty-retry" class="primary-button" type="button">Проверить ещё раз</button>
-            </div>
-        </div>
-
-        <!-- Уже добавленные источники темы: карточки в стиле «Предложки» (topic-sources.js) -->
-        <section class="topic-sources" aria-labelledby="topic-sources-title">
-            <div class="proposals-toolbar">
-                <h2 id="topic-sources-title" class="topic-sources-title">Источники темы</h2>
-                <div class="proposals-filters" role="group" aria-label="Площадка">
-                    <button type="button" class="proposals-filter active" data-topic-source-filter="all">Все</button>
-                    <button type="button" class="proposals-filter" data-topic-source-filter="Telegram">Telegram</button>
-                    <button type="button" class="proposals-filter" data-topic-source-filter="ВКонтакте">ВКонтакте</button>
-                    <button type="button" class="proposals-filter" data-topic-source-filter="Двач">Двач</button>
-                </div>
-                <span id="topic-sources-count" class="proposals-count"></span>
-                <button id="topic-sources-refresh" class="database-refresh" type="button" aria-label="Обновить список">↻</button>
-            </div>
-            <div id="topic-sources-status" class="proposals-status" role="status"></div>
-            <div id="topic-sources-grid" class="proposals-grid topic-sources-grid"></div>
-        </section>
+      </div>
+      <div class="controls-row controls-management">
+        <button id="card-control-search" class="btn btn-mini" type="button" aria-label="Искать контент" title="Искать контент"><span class="btn-icon" aria-hidden="true">🔍</span><span class="btn-label">Поиск</span></button>
+        <button id="card-control-sources" class="btn btn-mini" type="button" aria-label="Обновить источники" title="Обновить источники"><span class="btn-icon" aria-hidden="true">📚</span><span class="btn-label">Источники</span></button>
+        <button id="card-control-stop" class="btn btn-mini btn-danger" type="button" aria-label="Остановить приложение" title="Остановить приложение"><span class="btn-icon" aria-hidden="true">🛑</span><span class="btn-label">Стоп</span></button>
+      </div>
     </div>
+  </div>
 
-    <!-- ВКЛАДКА: ДЕРЕВО ТЕМ (tree.js) — единственное место, где тема выбирается и меняется. Узлы и линии — CSS (css/tree.css) -->
-    <div id="tree-tab" class="view-panel tree-panel">
-        <div class="tree-head">
-            <div class="tree-head-text">
-                <h2 class="tree-title">Темы поиска</h2>
-                <p class="tree-current">Сейчас: <strong id="tree-current-name">—</strong></p>
-            </div>
-            <button id="tree-refresh" class="database-refresh" type="button" aria-label="Обновить дерево">↻</button>
+  <div id="item-empty" class="status-msg item-empty" hidden>
+    <span id="item-empty-message">Пул контента пуст.</span>
+    <div class="item-empty-actions">
+      <button id="item-search-button" class="primary-button" type="button">Найти контент</button>
+      <button id="item-add-button" class="secondary-button" type="button">Добавить вручную</button>
+    </div>
+  </div>
+</div>
+
+<!-- ПРЕДЛОЖКА -->
+<div id="proposals-tab" class="view-panel wide-panel">
+  <div class="proposals-toolbar">
+    <div class="proposals-filters" role="group" aria-label="Фильтр">
+      <button type="button" class="proposals-filter active" data-proposal-filter="all">Все</button>
+      <button type="button" class="proposals-filter" data-proposal-filter="liked">🗿 Нравится</button>
+      <button type="button" class="proposals-filter" data-proposal-filter="undecided">🤷 Не знаю</button>
+    </div>
+    <span id="proposals-count" class="proposals-count"></span>
+    <button id="proposals-refresh" class="refresh-button" type="button" aria-label="Обновить список">↻</button>
+  </div>
+  <div id="proposals-status" class="proposals-status" role="status"></div>
+  <div id="proposals-grid" class="proposals-grid"></div>
+</div>
+
+<!-- ИСТОЧНИКИ -->
+<div id="source-tab" class="view-panel">
+  <section class="discovery-panel" aria-label="Автоподбор источников">
+    <div class="discovery-text"><strong>Автоподбор по теме</strong><span id="discovery-status">Загружаю сведения…</span></div>
+    <button id="discovery-button" class="primary-button" type="button">Подобрать источники</button>
+  </section>
+  <label class="source-platform-filter" for="source-platform"><span>Платформа</span>
+    <select id="source-platform"><option value="any">Все источники</option><option value="telegram">Telegram</option><option value="vk">ВКонтакте</option><option value="dvach">Двач</option></select>
+  </label>
+  <div id="source-loading" class="status-msg is-loading" role="status">Ищу источники…</div>
+  <div id="source-error" class="status-msg error-msg" role="alert" hidden></div>
+
+  <div id="source-card-wrapper" class="item-card-wrapper" hidden>
+    <div class="card">
+      <div class="media-shell">
+        <div id="source-grid" class="source-grid" aria-label="Свежие посты источника"></div>
+        <div id="source-media-fallback" class="media-fallback" hidden>Картинки источника недоступны.</div>
+      </div>
+      <div class="info">
+        <span id="source-score" class="badge" title="Оценка автоподбора: по теме, аудитория, доля просмотров" hidden></span>
+        <div id="source-name" class="source-text">Источник: —</div>
+        <div id="source-platform-label" class="source-text"></div>
+        <div id="source-stats" class="engagement-row" aria-label="Аудитория и активность источника" hidden></div>
+        <a id="source-link" class="source-post-link" target="_blank" rel="noopener noreferrer" hidden>Открыть источник ↗</a>
+        <div class="item-ai-note"><strong>Почему показан:</strong> <span id="source-why"></span></div>
+        <div id="source-desc" class="desc-text" hidden></div>
+      </div>
+    </div>
+    <div class="controls" role="group" aria-label="Решение по источнику">
+      <div class="controls-row">
+        <button class="btn btn-main" type="button" data-source-vote="reject" aria-label="Не нравится" title="Не нравится: убрать из подбора"><span class="btn-icon" aria-hidden="true">💩</span></button>
+        <button class="btn" type="button" data-source-vote="postpone" aria-label="Отложить" title="Отложить: показать позже"><span class="btn-icon" aria-hidden="true">✋</span></button>
+        <button class="btn" type="button" data-source-vote="maybe" aria-label="Не знаю" title="Не знаю: решение записано, источник не добавляется"><span class="btn-icon" aria-hidden="true">🤷</span></button>
+        <button class="btn btn-main" type="button" data-source-vote="approve" aria-label="Нравится" title="Нравится: добавить в источники парсера"><span class="btn-icon" aria-hidden="true">🗿</span></button>
+      </div>
+      <div class="controls-row controls-actions">
+        <div class="complaint-wrap">
+          <button id="source-complaint-button" class="btn btn-mini" type="button" aria-label="Пожаловаться" title="Пожаловаться" aria-haspopup="menu" aria-expanded="false"><span class="btn-icon" aria-hidden="true">🚩</span></button>
+          <div id="source-complaint-menu" class="complaint-menu" role="menu" hidden>
+            <button type="button" role="menuitem" data-source-reason="off_topic">Не по теме</button>
+            <button type="button" role="menuitem" data-source-reason="dead">Мёртвый: нет постов, не смотрят</button>
+            <button type="button" role="menuitem" data-source-reason="other">Другое</button>
+          </div>
         </div>
+      </div>
+    </div>
+  </div>
 
-        <form id="tree-form" class="tree-form">
-            <label for="tree-input">Новая тема или переход к существующей</label>
-            <div class="topic-row">
-                <input id="tree-input" type="text" maxlength="200" list="tree-options" placeholder="Например: котики, космос, ретро-автомобили" autocomplete="off">
-                <datalist id="tree-options"></datalist>
-                <button id="tree-save" type="submit">Выбрать</button>
-            </div>
-            <div id="tree-notice" class="topic-notice" role="status" hidden>
-                <span id="tree-notice-text"></span>
-                <button id="tree-force-new" class="topic-link" type="button">Нет, это другая тема</button>
-            </div>
+  <div id="source-empty" class="status-msg item-empty" hidden>
+    <span id="source-empty-message">Новых источников пока нет.</span>
+    <div class="item-empty-actions">
+      <button id="source-empty-discover" class="primary-button" type="button">Подобрать источники</button>
+      <button id="source-empty-retry" class="primary-button" type="button">Проверить ещё раз</button>
+    </div>
+  </div>
+
+  <section class="topic-sources" aria-labelledby="topic-sources-title">
+    <div class="proposals-toolbar">
+      <h2 id="topic-sources-title" class="section-title">Источники темы</h2>
+      <div class="proposals-filters" role="group" aria-label="Площадка">
+        <button type="button" class="proposals-filter active" data-topic-source-filter="all">Все</button>
+        <button type="button" class="proposals-filter" data-topic-source-filter="Telegram">Telegram</button>
+        <button type="button" class="proposals-filter" data-topic-source-filter="ВКонтакте">ВКонтакте</button>
+        <button type="button" class="proposals-filter" data-topic-source-filter="Двач">Двач</button>
+      </div>
+      <span id="topic-sources-count" class="proposals-count"></span>
+      <button id="topic-sources-refresh" class="refresh-button" type="button" aria-label="Обновить список">↻</button>
+    </div>
+    <div id="topic-sources-status" class="proposals-status" role="status"></div>
+    <div id="topic-sources-grid" class="proposals-grid topic-sources-grid"></div>
+  </section>
+</div>
+
+<!-- ДЕРЕВО ТЕМ -->
+<div id="tree-tab" class="view-panel wide-panel">
+  <div class="tree-head">
+    <div class="tree-head-text"><h2 class="section-title">Темы поиска</h2><p class="tree-current">Сейчас: <strong id="tree-current-name">—</strong></p></div>
+    <button id="tree-refresh" class="refresh-button" type="button" aria-label="Обновить дерево">↻</button>
+  </div>
+  <form id="tree-form" class="topic-form">
+    <label for="tree-input">Новая тема или переход к существующей</label>
+    <div class="topic-row">
+      <input id="tree-input" type="text" maxlength="200" list="tree-options" placeholder="Например: котики, космос, ретро-автомобили" autocomplete="off">
+      <datalist id="tree-options"></datalist>
+      <button id="tree-save" type="submit">Выбрать</button>
+    </div>
+    <div id="tree-notice" class="topic-notice" role="status" hidden><span id="tree-notice-text"></span><button id="tree-force-new" class="topic-link" type="button">Нет, это другая тема</button></div>
+  </form>
+  <p class="tree-legend"><span>🗂 общая тема</span><span>🔹 частная</span><span>📍 текущая</span><span>число — свои источники</span></p>
+  <div id="tree-status" class="proposals-status" role="status"></div>
+  <div class="tree-layout"><div id="tree-root" class="tree-root"></div><aside id="tree-detail" class="tree-detail" aria-live="polite"></aside></div>
+</div>
+
+<!-- ТЕСТ ИИ -->
+<div id="test-tab" class="view-panel test-panel">
+  <form id="analyze-form" class="analyze-form">
+    <label class="field-label" for="image-url">Ссылка на изображение</label>
+    <div class="url-input-row">
+      <input id="image-url" name="image_url" type="url" placeholder="https://example.com/picture.jpg" autocomplete="url">
+      <button id="analyze-button" class="primary-button" type="submit">Оценить</button>
+    </div>
+    <div class="form-divider"><span>или выберите файл</span></div>
+    <label class="file-picker" for="image-file"><span>Выбрать изображение</span><input id="image-file" name="image_file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp"></label>
+    <div class="field-hint">JPEG, PNG, GIF, WebP или BMP. Максимум 10 МБ. Оценка — по текущей теме поиска; размышления модели видны в журнале.</div>
+  </form>
+  <div id="test-error" class="status-msg error-msg" role="alert" hidden></div>
+  <div id="test-loading" class="status-msg rainbow-text" role="status" hidden>ИИ анализирует изображение…</div>
+  <section id="test-result" class="test-result" aria-live="polite" hidden>
+    <figure class="test-image-figure"><figcaption>Оригинал</figcaption><div class="test-preview"><img id="test-image" alt="Исходное изображение"></div></figure>
+    <div class="test-info">
+      <div class="test-result-heading"><h2>Оценка</h2><span id="test-rating" class="badge">0%</span></div>
+      <div id="test-model" class="source-text"></div>
+      <span id="test-relevance" class="relevance-badge"></span>
+      <div id="test-description" class="desc-text"></div>
+      <div id="test-why" class="item-ai-note"></div>
+    </div>
+  </section>
+</div>
+
+<!-- ЛИЧНЫЙ КАБИНЕТ -->
+<div id="account-tab" class="view-panel account-panel">
+  <div id="account-exposure" class="account-card account-warning" role="alert" hidden></div>
+  <nav class="account-nav" aria-label="Разделы кабинета">
+    <button type="button" data-account-section="profile" class="is-active">Профиль</button>
+    <button type="button" data-account-section="social">Соцсети</button>
+    <button type="button" data-account-section="privacy">Мои данные и куки</button>
+    <button type="button" data-account-section="databases">Базы данных</button>
+  </nav>
+
+  <section class="account-section" data-section="profile"><div id="account-profile-body" class="account-card status-msg is-loading">Загрузка…</div></section>
+
+  <section class="account-section" data-section="social" hidden>
+    <div class="account-card">
+      <div class="social-head"><span class="social-logo" aria-hidden="true">VK</span><div><h3>ВКонтакте</h3><p class="account-muted">Одно подключение на весь сайт: через него парсер ищет и читает паблики.</p></div></div>
+      <div class="vk-auth-actions"><button id="vk-oauth-button" class="secondary-button" type="button">Подключить VK</button><span id="vk-oauth-status" role="status">Проверяю подключение VK...</span></div>
+    </div>
+    <div class="account-card">
+      <div class="social-head"><span class="social-logo" aria-hidden="true">TG</span><div><h3>Telegram</h3><p class="account-muted">Публикация постов в ваш Telegram-канал прямо из приложения. Для этого нужен бот: он отправляет посты в канал. Токен бота хранится на сервере в зашифрованном виде.</p></div></div>
+      <div id="telegram-connected" class="telegram-connected" hidden><div id="telegram-summary" class="telegram-summary"></div><button id="telegram-disconnect" class="account-secondary" type="button">Отключить</button></div>
+      <form id="telegram-form" class="telegram-form">
+        <ol class="telegram-steps account-muted">
+          <li><b>Создайте бота.</b> Откройте <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a> в Telegram, отправьте ему <code>/newbot</code>, придумайте имя и ник (ник должен заканчиваться на <code>bot</code>). В ответ BotFather пришлёт <b>токен</b> — длинную строку вида <code>123456789:AA…</code>. Скопируйте её. Подробнее: <a href="https://core.telegram.org/bots#how-do-i-create-a-bot" target="_blank" rel="noopener noreferrer">инструкция Telegram</a>.</li>
+          <li><b>Добавьте бота в канал.</b> Откройте свой канал → название канала вверху → «Управление каналом» (значок карандаша) → «Администраторы» → «Добавить администратора» → найдите своего бота по нику. В правах оставьте включённым «Публикация сообщений». Бот должен быть именно администратором, иначе он не сможет писать в канал. Если канала ещё нет: <a href="https://telegram.org/faq_channels#q-how-do-i-create-a-channel" target="_blank" rel="noopener noreferrer">как создать канал</a>.</li>
+          <li><b>Подключите здесь.</b> Вставьте токен и адрес канала: <code>@имя_канала</code> или ссылку <code>t.me/имя_канала</code>. У закрытого канала без имени укажите числовой id вида <code>-1001234567890</code> (его покажет <a href="https://t.me/getidsbot" target="_blank" rel="noopener noreferrer">@getidsbot</a>, если переслать ему любой пост из канала). Приложение проверит бота и права и подключит канал.</li>
+        </ol>
+        <label><span>Токен бота — из ответа @BotFather</span><input id="telegram-token" type="password" autocomplete="off" placeholder="Вставьте токен от @BotFather" required></label>
+        <label><span>Канал, куда постить</span><input id="telegram-channel" type="text" autocomplete="off" placeholder="@имя_канала или ссылка на канал" required></label>
+        <button id="telegram-connect" class="primary-button" type="submit">Проверить и подключить</button>
+        <div id="telegram-status" class="account-muted" role="status"></div>
+      </form>
+      <div id="tgu-card" class="tgu-card" hidden>
+        <h4>Отложенные посты средствами Telegram</h4>
+        <p class="account-muted">Нужны, чтобы публиковать по расписанию. У бота нет отложенной отправки, а у вашего аккаунта есть: пост встанет в «Отложенные» канала и выйдет сам в назначенное время, даже если этот сайт выключен. Аккаунт должен быть владельцем канала или администратором с правом публикации. Данные для входа хранятся на сервере в зашифрованном виде. Без этого шага посты можно публиковать только сразу.</p>
+        <div id="tgu-connected" class="telegram-connected" hidden><div id="tgu-summary" class="telegram-summary"></div><button id="tgu-disconnect" class="account-secondary" type="button">Отключить</button></div>
+        <form id="tgu-start" class="telegram-form" hidden>
+          <ol class="telegram-steps account-muted">
+            <li id="tgu-step-keys"><b>Получите ключи (один раз для всего сайта).</b> Откройте <a href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer">my.telegram.org/apps</a>, войдите по номеру телефона (код придёт в Telegram), нажмите «Create application» (название и короткое имя любые, платформа — Desktop) и скопируйте <b>api_id</b> и <b>api_hash</b>.</li>
+            <li><b>Войдите в аккаунт.</b> Введите ключи и номер телефона владельца канала и нажмите «Получить код»: код придёт в Telegram (чат «Telegram»). Если код не приходит — «Войти по QR-коду»: Telegram на телефоне → Настройки → Устройства → Подключить устройство.</li>
+          </ol>
+          <div id="tgu-keys" class="tgu-keys">
+            <label><span>api_id</span><input id="tgu-api-id" type="text" inputmode="numeric" autocomplete="off" placeholder="Число из my.telegram.org" required></label>
+            <label><span>api_hash</span><input id="tgu-api-hash" type="password" autocomplete="off" placeholder="Длинная строка из my.telegram.org" required></label>
+          </div>
+          <label><span>Телефон</span><input id="tgu-phone" type="tel" autocomplete="tel" placeholder="Номер с кодом страны" required></label>
+          <div class="tgu-actions"><button class="primary-button" type="submit">Получить код</button><button id="tgu-qr-button" class="account-secondary" type="button" title="Если код не приходит">Войти по QR-коду</button></div>
         </form>
-
-        <p class="tree-legend"><span>🗂 общая тема</span><span>🔹 частная</span><span>📍 текущая</span><span>число — свои источники</span></p>
-        <div id="tree-status" class="proposals-status" role="status"></div>
-
-        <div class="tree-layout">
-            <div id="tree-root" class="tree-root"></div>
-            <aside id="tree-detail" class="tree-detail" aria-live="polite"></aside>
+        <div id="tgu-qr" class="tgu-qr" hidden>
+          <div id="tgu-qr-image" class="tgu-qr-image" role="img" aria-label="QR-код для входа в Telegram"></div>
+          <ol class="telegram-steps account-muted"><li>Откройте Telegram на телефоне: Настройки → Устройства → Подключить устройство.</li><li>Наведите камеру на этот код. Он обновляется сам.</li></ol>
+          <button id="tgu-qr-cancel" class="account-secondary" type="button">Отмена</button>
         </div>
-    </div>
-
-    <!-- ВКЛАДКА 3: ТЕСТ ОЦЕНКИ ИЗОБРАЖЕНИЯ -->
-    <div id="test-tab" class="view-panel test-panel">
-        <form id="analyze-form" class="analyze-form">
-            <label class="field-label" for="image-url">Ссылка на изображение</label>
-            <div class="url-input-row">
-                <input id="image-url" name="image_url" type="url" placeholder="https://example.com/picture.jpg" autocomplete="url">
-                <button id="analyze-button" class="analyze-button" type="submit">Оценить</button>
-            </div>
-            <div class="form-divider"><span>или выберите файл</span></div>
-            <label class="file-picker" for="image-file">
-                <span>Выбрать изображение</span>
-                <input id="image-file" name="image_file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp">
-            </label>
-            <div class="field-hint">JPEG, PNG, GIF, WebP или BMP. Максимум 10 МБ. Оценка — по текущей теме поиска; размышления модели видны в журнале.</div>
+        <form id="tgu-confirm" class="telegram-form" hidden>
+          <label><span>Код из Telegram</span><input id="tgu-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="Код из чата «Telegram»"></label>
+          <label id="tgu-password-row" hidden><span>Пароль двухэтапной защиты</span><input id="tgu-password" type="password" autocomplete="off"></label>
+          <div class="tgu-actions">
+            <button class="primary-button" type="submit">Подтвердить</button>
+            <button id="tgu-resend" class="account-secondary" type="button" hidden>Запросить код другим способом</button>
+            <button id="tgu-restart" class="account-secondary" type="button">Ввести данные заново</button>
+          </div>
         </form>
-
-        <div id="test-error" class="status-msg error-msg" role="alert" hidden></div>
-        <div id="test-loading" class="status-msg rainbow-text" role="status" hidden>ИИ анализирует изображение…</div>
-        <section id="test-result" class="test-result" aria-live="polite" hidden>
-            <figure class="test-image-figure">
-                <figcaption>Оригинал</figcaption>
-                <div class="test-preview"><img id="test-image" alt="Исходное изображение"></div>
-            </figure>
-            <div class="test-info">
-                <div class="test-result-heading">
-                    <h2>Оценка</h2>
-                    <span id="test-rating" class="badge">0%</span>
-                </div>
-                <div id="test-model" class="source-text"></div>
-                <span id="test-relevance" class="relevance-badge"></span>
-                <div id="test-description" class="desc-text"></div>
-                <div id="test-why" class="item-ai-note"></div>
-            </div>
-        </section>
+        <div id="tgu-status" class="account-muted" role="status"></div>
+      </div>
+      <div id="telegram-queue" class="telegram-queue" hidden></div>
     </div>
+  </section>
 
-    <!-- ВКЛАДКА 4: ЛИЧНЫЙ КАБИНЕТ (account.js) -->
-    <div id="account-tab" class="view-panel account-panel">
-        <div id="account-exposure" class="account-card account-warning" role="alert" hidden></div>
-        <nav class="account-nav" aria-label="Разделы кабинета">
-            <button type="button" data-account-section="profile" class="is-active">Профиль</button>
-            <button type="button" data-account-section="social">Соцсети</button>
-            <button type="button" data-account-section="privacy">Мои данные и куки</button>
-            <button type="button" data-account-section="databases">Базы данных</button>
-        </nav>
+  <section class="account-section" data-section="privacy" hidden>
+    <div class="account-card"><h3>Куки</h3><p class="account-muted">Всё, что браузер отправляет этому сайту. Куки с пометкой HttpOnly скрипты страницы прочитать не могут — их показывает сервер.</p><div id="privacy-cookies" class="privacy-table-wrap"></div></div>
+    <div class="account-card"><h3>Хранилище браузера</h3><p class="account-muted">localStorage и sessionStorage этого сайта — живут только в вашем браузере.</p><div id="privacy-storage" class="privacy-table-wrap"></div></div>
+    <div class="account-card"><h3>На сервере</h3><p id="privacy-server-note" class="account-muted"></p><div id="privacy-files" class="privacy-table-wrap"></div></div>
+  </section>
 
-        <section id="account-profile" class="account-section" data-section="profile">
-            <div id="account-profile-body" class="account-card status-msg is-loading">Загрузка…</div>
-        </section>
-
-        <section id="account-social" class="account-section" data-section="social" hidden>
-            <div class="account-card social-card">
-                <div class="social-head"><span class="social-logo social-logo-vk" aria-hidden="true">VK</span><div><h3>ВКонтакте</h3><p class="account-muted">Одно подключение на весь сайт: через него парсер ищет и читает паблики.</p></div></div>
-                <div class="vk-auth-actions">
-                    <button id="vk-oauth-button" class="vk-oauth-button" type="button">Подключить VK</button>
-                    <span id="vk-oauth-status" role="status">Проверяю подключение VK...</span>
-                </div>
-            </div>
-            <div class="account-card social-card">
-                <div class="social-head"><span class="social-logo social-logo-tg" aria-hidden="true">TG</span><div><h3>Telegram</h3><p class="account-muted">Публикация постов в ваш Telegram-канал прямо из приложения. Для этого нужен бот: он отправляет посты в канал. Токен бота хранится на сервере в зашифрованном виде.</p></div></div>
-                <div id="telegram-connected" class="telegram-connected" hidden>
-                    <div id="telegram-summary" class="telegram-summary"></div>
-                    <button id="telegram-disconnect" class="account-secondary" type="button">Отключить</button>
-                </div>
-                <form id="telegram-form" class="telegram-form">
-                    <ol class="telegram-steps account-muted">
-                        <li><b>Создайте бота.</b> Откройте <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a> в Telegram, отправьте ему <code>/newbot</code>, придумайте имя и ник (ник должен заканчиваться на <code>bot</code>). В ответ BotFather пришлёт <b>токен</b> — длинную строку вида <code>123456789:AA…</code>. Скопируйте её. Подробнее: <a href="https://core.telegram.org/bots#how-do-i-create-a-bot" target="_blank" rel="noopener noreferrer">инструкция Telegram</a>.</li>
-                        <li><b>Добавьте бота в канал.</b> Откройте свой канал → название канала вверху → «Управление каналом» (значок карандаша) → «Администраторы» → «Добавить администратора» → найдите своего бота по нику. В правах оставьте включённым «Публикация сообщений». Бот должен быть именно администратором, иначе он не сможет писать в канал. Если канала ещё нет: <a href="https://telegram.org/faq_channels#q-how-do-i-create-a-channel" target="_blank" rel="noopener noreferrer">как создать канал</a>.</li>
-                        <li><b>Подключите здесь.</b> Вставьте токен и адрес канала: <code>@имя_канала</code> или ссылку <code>t.me/имя_канала</code>. У закрытого канала без имени укажите числовой id вида <code>-1001234567890</code> (его покажет <a href="https://t.me/getidsbot" target="_blank" rel="noopener noreferrer">@getidsbot</a>, если переслать ему любой пост из канала). Приложение проверит бота и права и подключит канал.</li>
-                    </ol>
-                    <label><span>Токен бота — из ответа @BotFather</span><input id="telegram-token" type="password" autocomplete="off" placeholder="Вставьте токен от @BotFather" required></label>
-                    <label><span>Канал, куда постить</span><input id="telegram-channel" type="text" autocomplete="off" placeholder="@имя_канала или ссылка на канал" required></label>
-                    <button id="telegram-connect" class="primary-button" type="submit">Проверить и подключить</button>
-                    <div id="telegram-status" class="account-muted" role="status"></div>
-                </form>
-                <div id="tgu-card" class="tgu-card" hidden>
-                    <h4>Отложенные посты средствами Telegram</h4>
-                    <p class="account-muted">Нужны, чтобы публиковать по расписанию. У бота нет отложенной отправки, а у вашего аккаунта есть: пост встанет в «Отложенные» канала и выйдет сам в назначенное время, даже если этот сайт выключен. Аккаунт должен быть владельцем канала или администратором с правом публикации. Данные для входа хранятся на сервере в зашифрованном виде. Без этого шага посты можно публиковать только сразу.</p>
-                    <div id="tgu-connected" class="telegram-connected" hidden>
-                        <div id="tgu-summary" class="telegram-summary"></div>
-                        <button id="tgu-disconnect" class="account-secondary" type="button">Отключить</button>
-                    </div>
-                    <form id="tgu-start" class="telegram-form" hidden>
-                        <ol class="telegram-steps account-muted">
-                            <li id="tgu-step-keys"><b>Получите ключи (один раз для всего сайта).</b> Откройте <a href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer">my.telegram.org/apps</a>, войдите по номеру телефона (код придёт в Telegram), нажмите «Create application» (название и короткое имя любые, платформа — Desktop) и скопируйте <b>api_id</b> и <b>api_hash</b>.</li>
-                            <li><b>Войдите в аккаунт.</b> Введите ключи и номер телефона владельца канала и нажмите «Получить код»: код придёт в Telegram (чат «Telegram»). Если код не приходит — «Войти по QR-коду»: Telegram на телефоне → Настройки → Устройства → Подключить устройство.</li>
-                        </ol>
-                        <div id="tgu-keys" class="tgu-keys">
-                            <label><span>api_id</span><input id="tgu-api-id" type="text" inputmode="numeric" autocomplete="off" placeholder="Число из my.telegram.org" required></label>
-                            <label><span>api_hash</span><input id="tgu-api-hash" type="password" autocomplete="off" placeholder="Длинная строка из my.telegram.org" required></label>
-                        </div>
-                        <label><span>Телефон</span><input id="tgu-phone" type="tel" autocomplete="tel" placeholder="Номер с кодом страны" required></label>
-                        <div class="tgu-confirm-actions">
-                            <button class="primary-button" type="submit">Получить код</button>
-                            <button id="tgu-qr-button" class="account-secondary" type="button" title="Если код не приходит">Войти по QR-коду</button>
-                        </div>
-                    </form>
-                    <div id="tgu-qr" class="tgu-qr" hidden>
-                        <div id="tgu-qr-image" class="tgu-qr-image" role="img" aria-label="QR-код для входа в Telegram"></div>
-                        <ol class="telegram-steps account-muted">
-                            <li>Откройте Telegram на телефоне: Настройки → Устройства → Подключить устройство.</li>
-                            <li>Наведите камеру на этот код. Он обновляется сам.</li>
-                        </ol>
-                        <button id="tgu-qr-cancel" class="account-secondary" type="button">Отмена</button>
-                    </div>
-                    <form id="tgu-confirm" class="telegram-form" hidden>
-                        <label><span>Код из Telegram</span><input id="tgu-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="Код из чата «Telegram»"></label>
-                        <label id="tgu-password-row" hidden><span>Пароль двухэтапной защиты</span><input id="tgu-password" type="password" autocomplete="off"></label>
-                        <div class="tgu-confirm-actions">
-                            <button class="primary-button" type="submit">Подтвердить</button>
-                            <button id="tgu-resend" class="account-secondary" type="button" hidden>Запросить код другим способом</button>
-                            <button id="tgu-restart" class="account-secondary" type="button">Ввести данные заново</button>
-                        </div>
-                    </form>
-                    <div id="tgu-status" class="account-muted" role="status"></div>
-                </div>
-                <div id="telegram-queue" class="telegram-queue" hidden></div>
-            </div>
-        </section>
-
-        <section id="account-privacy" class="account-section" data-section="privacy" hidden>
-            <div class="account-card">
-                <h3>Куки</h3>
-                <p class="account-muted">Всё, что браузер отправляет этому сайту. Куки с пометкой HttpOnly скрипты страницы прочитать не могут — их показывает сервер.</p>
-                <div id="privacy-cookies" class="privacy-table-wrap"></div>
-            </div>
-            <div class="account-card">
-                <h3>Хранилище браузера</h3>
-                <p class="account-muted">localStorage и sessionStorage этого сайта — живут только в вашем браузере.</p>
-                <div id="privacy-storage" class="privacy-table-wrap"></div>
-            </div>
-            <div class="account-card">
-                <h3>На сервере</h3>
-                <p id="privacy-server-note" class="account-muted"></p>
-                <div id="privacy-files" class="privacy-table-wrap"></div>
-            </div>
-        </section>
-
-        <section id="account-databases" class="account-section database-panel" data-section="databases" hidden>
-            <div class="database-toolbar">
-                <label>
-                    <span>База</span>
-                    <select id="database-select"></select>
-                </label>
-                <label>
-                    <span>Коллекция</span>
-                    <select id="database-collection-select"></select>
-                </label>
-                <button id="database-add" class="database-add-button" type="button">＋ Добавить запись</button>
-                <button id="database-refresh" class="database-refresh" type="button" aria-label="Обновить список">↻</button>
-            </div>
-            <div id="database-status" class="database-status" role="status">Выберите базу для просмотра записей.</div>
-            <div id="database-records" class="database-records"></div>
-
-            <div class="database-danger-zone">
-                <span>Очистить ваши данные: пул и история станут пустыми и сразу начнётся поиск контента по текущей теме. Общий каталог источников не меняется.</span>
-                <button id="database-reset" class="database-reset-button" type="button">Очистить мои данные</button>
-            </div>
-
-            <dialog id="database-edit-dialog" class="database-edit-dialog">
-                <form id="database-edit-form">
-                    <h2 id="database-dialog-title">Редактировать запись</h2>
-                    <label for="database-record-json">Данные записи (JSON)</label>
-                    <textarea id="database-record-json" spellcheck="false" required></textarea>
-                    <div class="database-dialog-actions">
-                        <button class="database-cancel" type="button" id="database-cancel">Отмена</button>
-                        <button class="database-save" type="submit">Сохранить</button>
-                    </div>
-                </form>
-            </dialog>
-        </section>
+  <section class="account-section" data-section="databases" hidden>
+    <div class="database-toolbar">
+      <label><span>База</span><select id="database-select"></select></label>
+      <label><span>Коллекция</span><select id="database-collection-select"></select></label>
+      <button id="database-add" class="primary-button" type="button">＋ Добавить запись</button>
+      <button id="database-refresh" class="refresh-button" type="button" aria-label="Обновить список">↻</button>
     </div>
-
-    </main>
-
-    <div id="image-viewer" class="image-viewer" hidden>
-        <div id="image-viewer-window" class="image-viewer-window" role="dialog" aria-modal="true" aria-labelledby="image-viewer-file">
-            <header id="image-viewer-header" class="image-viewer-header">
-                <a id="image-viewer-file" class="image-viewer-file" target="_blank" rel="noopener noreferrer">Изображение</a>
-                <span id="image-viewer-position" class="image-viewer-position" hidden></span>
-                <a id="image-viewer-post" class="image-viewer-post" target="_blank" rel="noopener noreferrer" hidden>Пост ↗</a>
-                <button id="image-viewer-rocket" class="image-viewer-close image-viewer-rocket" type="button" aria-label="Запостить" title="Запостить в Telegram (закрыть окно — Esc или клик по фону)">🚀</button>
-            </header>
-            <div id="image-viewer-stage" class="image-viewer-stage">
-                <img id="image-viewer-image" alt="" draggable="false">
-                <video id="image-viewer-video" playsinline loop hidden></video>
-                <div id="image-viewer-video-hit" class="image-viewer-video-hit"></div>
-                <div id="video-controls" class="video-controls">
-                    <button id="vc-play" class="vc-btn" type="button" aria-label="Пауза">
-                        <svg class="vc-icon-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>
-                        <svg class="vc-icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
-                    </button>
-                    <div id="vc-progress" class="vc-slider vc-progress" role="slider" tabindex="0" aria-label="Перемотка" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                        <div class="vc-track"><div id="vc-buffered" class="vc-buffered"></div><div id="vc-progress-fill" class="vc-fill"></div></div>
-                    </div>
-                    <span id="vc-time" class="vc-time">0:00 / 0:00</span>
-                    <button id="vc-mute" class="vc-btn" type="button" aria-label="Выключить звук">
-                        <svg class="vc-icon-sound" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5a1 1 0 0 0 1 1h3l4.4 3.6a.8.8 0 0 0 1.3-.6V5.5a.8.8 0 0 0-1.3-.6L8 8.5H5a1 1 0 0 0-1 1z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                        <svg class="vc-icon-muted" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5a1 1 0 0 0 1 1h3l4.4 3.6a.8.8 0 0 0 1.3-.6V5.5a.8.8 0 0 0-1.3-.6L8 8.5H5a1 1 0 0 0-1 1z"/><path d="M16.5 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                    </button>
-                    <div id="vc-volume" class="vc-slider vc-volume" role="slider" tabindex="0" aria-label="Громкость" aria-valuemin="0" aria-valuemax="100" aria-valuenow="33">
-                        <div class="vc-track"><div id="vc-volume-fill" class="vc-fill"></div></div>
-                    </div>
-                    <button id="vc-fullscreen" class="vc-btn" type="button" aria-label="Во весь экран">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                    </button>
-                </div>
-                <div id="image-viewer-status" class="image-viewer-status" role="status" hidden>
-                    <span id="image-viewer-status-text"></span>
-                    <a id="image-viewer-source" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a>
-                </div>
-            </div>
-        </div>
+    <div id="database-status" class="database-status" role="status">Выберите базу для просмотра записей.</div>
+    <div id="database-records" class="database-records"></div>
+    <div class="database-danger-zone">
+      <span>Очистить ваши данные: пул и история станут пустыми и сразу начнётся поиск контента по текущей теме. Общий каталог источников не меняется.</span>
+      <button id="database-reset" class="danger-button" type="button">Очистить мои данные</button>
     </div>
+    <dialog id="database-edit-dialog" class="database-edit-dialog">
+      <form id="database-edit-form">
+        <h2 id="database-dialog-title">Редактировать запись</h2>
+        <label for="database-record-json">Данные записи (JSON)</label>
+        <textarea id="database-record-json" spellcheck="false" required></textarea>
+        <div class="dialog-actions"><button class="secondary-button" type="button" id="database-cancel">Отмена</button><button class="primary-button" type="submit">Сохранить</button></div>
+      </form>
+    </dialog>
+  </section>
+</div>
+</main>
+
+<div id="image-viewer" class="image-viewer" hidden>
+  <div id="image-viewer-window" class="image-viewer-window" role="dialog" aria-modal="true" aria-labelledby="image-viewer-file">
+    <header id="image-viewer-header" class="image-viewer-header">
+      <a id="image-viewer-file" class="image-viewer-file" target="_blank" rel="noopener noreferrer">Изображение</a>
+      <span id="image-viewer-position" class="image-viewer-position" hidden></span>
+      <a id="image-viewer-post" class="image-viewer-post" target="_blank" rel="noopener noreferrer" hidden>Пост ↗</a>
+      <button id="image-viewer-rocket" class="image-viewer-rocket" type="button" aria-label="Запостить" title="Запостить в Telegram (закрыть окно — Esc или клик по фону)">🚀</button>
+    </header>
+    <div id="image-viewer-stage" class="image-viewer-stage">
+      <img id="image-viewer-image" alt="" draggable="false">
+      <video id="image-viewer-video" playsinline loop hidden></video>
+      <div class="image-viewer-video-hit"></div>
+      <div id="video-controls" class="video-controls">
+        <button id="vc-play" class="vc-btn" type="button" aria-label="Пауза">
+          <svg class="vc-icon-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>
+          <svg class="vc-icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
+        </button>
+        <div id="vc-progress" class="vc-slider vc-progress" role="slider" tabindex="0" aria-label="Перемотка" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="vc-track"><div id="vc-buffered" class="vc-buffered"></div><div id="vc-progress-fill" class="vc-fill"></div></div></div>
+        <span id="vc-time" class="vc-time">0:00 / 0:00</span>
+        <button id="vc-mute" class="vc-btn" type="button" aria-label="Выключить звук">
+          <svg class="vc-icon-sound" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5a1 1 0 0 0 1 1h3l4.4 3.6a.8.8 0 0 0 1.3-.6V5.5a.8.8 0 0 0-1.3-.6L8 8.5H5a1 1 0 0 0-1 1z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="vc-icon-muted" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5a1 1 0 0 0 1 1h3l4.4 3.6a.8.8 0 0 0 1.3-.6V5.5a.8.8 0 0 0-1.3-.6L8 8.5H5a1 1 0 0 0-1 1z"/><path d="M16.5 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <div id="vc-volume" class="vc-slider vc-volume" role="slider" tabindex="0" aria-label="Громкость" aria-valuemin="0" aria-valuemax="100" aria-valuenow="33"><div class="vc-track"><div id="vc-volume-fill" class="vc-fill"></div></div></div>
+        <button id="vc-fullscreen" class="vc-btn" type="button" aria-label="Во весь экран"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+      </div>
+      <div id="image-viewer-status" class="image-viewer-status" role="status" hidden><span id="image-viewer-status-text"></span><a id="image-viewer-source" target="_blank" rel="noopener noreferrer" hidden>Открыть исходный пост ↗</a></div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
