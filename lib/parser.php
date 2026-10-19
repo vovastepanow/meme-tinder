@@ -251,10 +251,6 @@ function build_candidate_queue($by_platform, $seen, array $rejected = [], array 
 
 // ---- Кэши оценок ----
 
-function screened_cache_load() {
-    return array_filter(load_data(SCREENED_CACHE_FILE, []), fn($e) => is_array($e) && (int)($e['at'] ?? 0) >= time() - SCREENED_CACHE_DAYS * DAY_SECONDS);
-}
-
 function screened_scores_for_topic(array $cache, $topic) {
     $topic = mb_strtolower($topic);
     return array_map(fn($e) => (int)$e['score'], array_filter($cache, fn($e) => mb_strtolower((string)($e['topic'] ?? '')) === $topic));

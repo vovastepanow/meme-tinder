@@ -174,3 +174,164 @@ function connections_update(callable $fn, $uid = null): array {
         return $updated;
     });
 }
+
+// ---- Исходящие посты (Telegram) ----
+
+/** Загрузить очередь постов (outbox). */
+function outbox_load($uid = null): array {
+    $uid = $uid ?: app_user_id();
+    $rows = db_all('SELECT data FROM outbox WHERE user_id = ? ORDER BY publish_at', [$uid]);
+    return array_map(fn($r) => db_unjson($r['data'], []), $rows);
+}
+
+/** Обновить очередь постов. */
+function outbox_update(callable $fn, $uid = null): array {
+    $uid = $uid ?: app_user_id();
+    return db_tx(function () use ($uid, $fn) {
+        db_exec('INSERT OR IGNORE INTO users (id, created_at) VALUES (?, ?)', [$uid, time()]);
+        $current = outbox_load($uid);
+        $updated = $fn($current);
+        if ($updated === null) return $current;
+
+        db_exec('DELETE FROM outbox WHERE user_id = ?', [$uid]);
+        foreach ($updated as $item) {
+            $id = $item['id'] ?? bin2hex(random_bytes(8));
+            db_exec('INSERT INTO outbox (id, user_id, publish_at, status, data) VALUES (?, ?, ?, ?, ?)',
+                    [$id, $uid, $item['publish_at'] ?? time(), $item['status'] ?? 'pending', db_json($item)]);
+        }
+        return $updated;
+    });
+}
+
+// ---- Опубликованные посты ----
+
+/** Загрузить журнал опубликованных. */
+function published_load($uid = null, $limit = null): array {
+    $uid = $uid ?: app_user_id();
+    $sql = 'SELECT data FROM published WHERE user_id = ? ORDER BY id DESC';
+    if ($limit) $sql .= ' LIMIT ' . (int)$limit;
+    $rows = db_all($sql, [$uid]);
+    return array_map(fn($r) => db_unjson($r['data'], []), $rows);
+}
+
+/** Добавить пост в журнал (с обрезкой). */
+function published_add(array $entry, $uid = null): void {
+    $uid = $uid ?: app_user_id();
+    db_tx(function () use ($uid, $entry) {
+        db_exec('INSERT OR IGNORE INTO users (id, created_at) VALUES (?, ?)', [$uid, time()]);
+        db_exec('INSERT INTO published (user_id, at, data) VALUES (?, ?, ?)',
+                [$uid, $entry['at'] ?? time(), db_json($entry)]);
+
+        $count = db_value('SELECT COUNT(*) FROM published WHERE user_id = ?', [$uid]);
+        if ($count > TELEGRAM_PUBLISHED_LOG_LIMIT) {
+            $excess = $count - TELEGRAM_PUBLISHED_LOG_LIMIT;
+            db_exec('DELETE FROM published WHERE user_id = ? AND id IN (SELECT id FROM published WHERE user_id = ? ORDER BY id ASC LIMIT ?)',
+                    [$uid, $uid, $excess]);
+        }
+    });
+}
+
+// ---- Ключ-значение хранилище ----
+
+/** Получить значение (или по умолчанию). */
+function kv_get($key, $default = null) {
+    $row = db_one('SELECT value FROM kv WHERE key = ?', [$key]);
+    if (!$row) return $default;
+    $data = db_unjson($row['value'], null);
+    return is_array($data) && isset($data['_kv_value']) ? $data['_kv_value'] : $default;
+}
+
+/** Обновить значение через мутатор. */
+function kv_update($key, callable $fn, $default = null) {
+    return db_tx(function () use ($key, $fn, $default) {
+        $row = db_one('SELECT value FROM kv WHERE key = ?', [$key]);
+        $data = $row ? db_unjson($row['value'], null) : null;
+        $current = is_array($data) && isset($data['_kv_value']) ? $data['_kv_value'] : $default;
+        $updated = $fn($current);
+        if ($updated === null) return $current;
+
+        db_exec('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)', [$key, db_json(['_kv_value' => $updated])]);
+        return $updated;
+    });
+}
+
+// ---- Каталог источников и темы ----
+
+/** Загрузить каталог источников, темы и голоса. */
+function catalog_load(): array {
+    $catalog = ['sources' => [], 'votes' => [], 'suggestions' => [], 'topics' => [], 'kv' => []];
+
+    $rows = db_all('SELECT kind, source_id, position, data FROM catalog_sources ORDER BY kind, position');
+    foreach ($rows as $r) {
+        if (!isset($catalog['sources'][$r['kind']])) $catalog['sources'][$r['kind']] = [];
+        $catalog['sources'][$r['kind']][$r['source_id']] = db_unjson($r['data'], []);
+    }
+
+    $catalog['votes'] = array_column(db_all('SELECT data FROM source_votes ORDER BY position'), null);
+    $catalog['suggestions'] = array_column(db_all('SELECT data FROM source_suggestions ORDER BY position'), null);
+    $catalog['topics'] = array_column(db_all('SELECT id, data FROM topics ORDER BY position'), null, 'id');
+
+    $rows = db_all('SELECT key, value FROM kv');
+    foreach ($rows as $r) $catalog['kv'][$r['key']] = db_unjson($r['value'], []);
+
+    return $catalog;
+}
+
+/** Обновить каталог целиком. */
+function catalog_update(callable $fn): void {
+    $catalog = catalog_load();
+    $updated = $fn($catalog);
+    if ($updated === null) return;
+
+    db_tx(function () use ($updated) {
+        db_exec('DELETE FROM catalog_sources');
+        foreach ($updated['sources'] as $kind => $sources) {
+            foreach ($sources as $pos => $source) {
+                $source_id = $source['id'] ?? $pos;
+                db_exec('INSERT INTO catalog_sources (kind, source_id, position, data) VALUES (?, ?, ?, ?)',
+                        [$kind, $source_id, $pos, db_json($source)]);
+            }
+        }
+
+        db_exec('DELETE FROM source_votes');
+        foreach ($updated['votes'] as $pos => $vote) {
+            db_exec('INSERT INTO source_votes (source_id, position, data) VALUES (?, ?, ?)',
+                    [$vote['source_id'] ?? '', $pos, db_json($vote)]);
+        }
+
+        db_exec('DELETE FROM source_suggestions');
+        foreach ($updated['suggestions'] as $pos => $sugg) {
+            db_exec('INSERT INTO source_suggestions (source_id, position, data) VALUES (?, ?, ?)',
+                    [$sugg['source_id'] ?? '', $pos, db_json($sugg)]);
+        }
+
+        db_exec('DELETE FROM topics');
+        foreach ($updated['topics'] as $id => $topic) {
+            $topic['id'] = $id;
+            $pos = $topic['position'] ?? 0;
+            db_exec('INSERT INTO topics (id, position, data) VALUES (?, ?, ?)',
+                    [$id, $pos, db_json($topic)]);
+        }
+
+        db_exec('DELETE FROM kv');
+        foreach ($updated['kv'] as $key => $value) {
+            db_exec('INSERT INTO kv (key, value) VALUES (?, ?)', [$key, db_json($value)]);
+        }
+    });
+}
+
+// ---- Состояние парсера ----
+
+/** Получить состояние парсера пользователя. */
+function parser_state_load($uid = null): array {
+    $uid = $uid ?: app_user_id();
+    $row = db_one('SELECT pid, started_at, tab, tab_seen, tab_opened_at FROM parser_runtime WHERE user_id = ?', [$uid]);
+    return $row ?: ['pid' => 0, 'started_at' => 0, 'tab' => '', 'tab_seen' => 0, 'tab_opened_at' => 0];
+}
+
+/** Обновить состояние парсера. */
+function parser_state_update(array $state, $uid = null): void {
+    $uid = $uid ?: app_user_id();
+    db_exec('INSERT OR REPLACE INTO parser_runtime (user_id, pid, started_at, tab, tab_seen, tab_opened_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [$uid, $state['pid'] ?? 0, $state['started_at'] ?? 0, $state['tab'] ?? '', $state['tab_seen'] ?? 0, $state['tab_opened_at'] ?? 0]);
+}
