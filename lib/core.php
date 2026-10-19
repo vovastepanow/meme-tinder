@@ -106,44 +106,46 @@ function parser_runtime_file($suffix) { return user_dir() . '/parser-' . PARSER_
 function empty_history() { return array_fill_keys(HISTORY_COLLECTIONS, []); }
 function load_history() { return load_data(history_file(), empty_history()); }
 
-function user_ids() {
-    return array_values(array_filter(is_dir(USERS_DIR) ? scandir(USERS_DIR) : [], fn($n) => is_valid_user_id($n) && is_dir(USERS_DIR . "/$n")));
-}
-
 /** Отметка захода (не чаще раза в 10 минут) и раз в сутки — удаление брошенных профилей. */
 function user_touch() {
-    $marker = user_dir() . '/last-seen';
-    if (time() - (int)@filemtime($marker) < 600) return;
-    @touch($marker);
-    $flag = USERS_DIR . '/.gc';
-    if (time() - (int)@filemtime($flag) < DAY_SECONDS) return;
-    @touch($flag);
-    foreach (user_ids() as $uid) {
-        $seen = (int)(@filemtime(USERS_DIR . "/$uid/last-seen") ?: @filemtime(USERS_DIR . "/$uid"));
-        if ($uid !== app_user_bind() && time() - $seen >= USER_RETENTION_DAYS * DAY_SECONDS) remove_dir(USERS_DIR . "/$uid");
+    static $last_touch = 0, $last_gc = 0;
+    $now = time();
+
+    $uid = app_user_id();
+    if ($now - $last_touch < 600) {
+        db_exec('INSERT OR IGNORE INTO users (id, created_at, last_seen) VALUES (?, ?, ?)',
+                [$uid, $now, $now]);
+        db_exec('UPDATE users SET last_seen = ? WHERE id = ?', [$now, $uid]);
+        return;
+    }
+    $last_touch = $now;
+
+    if ($now - $last_gc < DAY_SECONDS) return;
+    $last_gc = $now;
+
+    foreach (user_ids() as $id) {
+        if ($id === $uid) continue;
+        $row = db_one('SELECT last_seen, created_at FROM users WHERE id = ?', [$id]);
+        $seen = (int)($row['last_seen'] ?? $row['created_at'] ?? $now);
+        if ($now - $seen >= USER_RETENTION_DAYS * DAY_SECONDS) {
+            db_exec('DELETE FROM users WHERE id = ?', [$id]);
+        }
     }
 }
 
-/** Записи пулов и «Предложки» всех пользователей: файлы кэша медиа общие и удаляются, только когда никому не нужны. */
-function all_users_pool_items($except_uid = null) {
-    $items = [];
-    foreach (user_ids() as $uid) {
-        if ($uid === $except_uid) continue;
-        array_push($items, ...array_values(load_data(USERS_DIR . "/$uid/pool.json", [])));
-        $history = load_data(USERS_DIR . "/$uid/history.json", []);
-        foreach (PROPOSAL_COLLECTIONS as $c) foreach ($history[$c] ?? [] as $item) if (empty($item['proposal_hidden'])) $items[] = $item;
-    }
-    return $items;
-}
-
-/** Пустые файлы нового пользователя и нормализованный каталог. */
+/** Инициализация данных нового пользователя и нормализация каталога источников. */
 function ensure_default_project_data() {
-    if (!is_file(history_file())) save_data(history_file(), empty_history());
-    if (!is_file(pool_file())) save_data(pool_file(), []);
-    if (!is_file(settings_file())) save_data(settings_file(), default_settings());
+    $uid = app_user_id();
+    load_settings($uid);
+    history_load($uid);
     $db = load_data(SOURCES_FILE, null);
     $normalized = normalize_source_db($db ?? []);
     if ($db !== $normalized) save_data(SOURCES_FILE, $normalized);
+}
+
+/** История пользователя из БД (или пусто). */
+function load_history_sql($uid = null): array {
+    return history_load($uid);
 }
 
 // ---- HTTP ----
@@ -317,8 +319,10 @@ function normalize_topic($topic) {
     return mb_substr(trim(preg_replace('/\s+/u', ' ', (string)$topic) ?? ''), 0, TOPIC_MAX_LENGTH);
 }
 
-function load_settings() {
-    $s = array_merge(default_settings(), load_data(settings_file(), []));
+/** Загрузить настройки с нормализацией (обёртка над db_load_settings). */
+function load_settings($uid = null) {
+    $s = db_load_settings($uid);
+    $s = array_merge(default_settings(), $s);
     $s['topic'] = normalize_topic($s['topic']) ?: DEFAULT_TOPIC;
     $s['topic2'] = normalize_topic($s['topic2']);
     if (topic_norm($s['topic2']) === topic_norm($s['topic'])) $s['topic2'] = '';
@@ -326,8 +330,10 @@ function load_settings() {
     return $s;
 }
 
-function save_settings(array $changes) {
-    return update_data(settings_file(), default_settings(), fn($s) => array_merge(default_settings(), $s, $changes));
+/** Сохранить настройки (обёртка над db_save_settings). */
+function save_settings($changes, $uid = null) {
+    $current = load_settings($uid);
+    db_save_settings(array_merge(default_settings(), $current, $changes), $uid);
 }
 
 /** Тема каноническим названием из реестра («мемы и юмор» → «Мемы и юмор»). */
