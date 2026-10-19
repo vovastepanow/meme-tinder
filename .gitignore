@@ -1,10 +1,12 @@
 # Секреты
 config.local.php
 secret.key.php
-# Данные: пользователи, каталог, кэши, медиа (создаются приложением)
+# Данные: пользователи, каталог, кэши, медиа, БД (создаются приложением)
 users/
 media_cache/
 history_media/
+data/*.sqlite*
+data/locks/
 *.json
 !package.json
 # Блокировки, журналы, временные файлы, байт-код Python

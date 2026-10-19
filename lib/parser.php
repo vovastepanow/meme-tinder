@@ -271,18 +271,27 @@ function source_pass_rates(array $cache, $topic) {
 /** Добавляет в кэш и оставляет $limit самых свежих записей. */
 function cache_merge($file, array $new, $limit) {
     if (!$new) return;
-    update_data($file, [], function ($cache) use ($new, $limit) {
-        $cache = array_merge($cache, $new);
-        if (count($cache) > $limit) { uasort($cache, fn($a, $b) => (int)($b['at'] ?? 0) <=> (int)($a['at'] ?? 0)); $cache = array_slice($cache, 0, $limit, true); }
-        return $cache;
+    db_tx(function () use ($new, $limit) {
+        foreach ($new as $url => $data) {
+            db_exec('INSERT OR REPLACE INTO screened_cache (url, topic, source, score, at) VALUES (?, ?, ?, ?, ?)',
+                    [$url, $data['topic'] ?? '', $data['source'] ?? '', $data['score'] ?? 0, time()]);
+        }
+        db_exec('DELETE FROM screened_cache WHERE at < ?', [time() - SCREENED_CACHE_DAYS * DAY_SECONDS]);
+        $count = db_value('SELECT COUNT(*) FROM screened_cache');
+        if ($count > $limit) {
+            $excess = $count - $limit;
+            db_exec('DELETE FROM screened_cache WHERE url IN (SELECT url FROM screened_cache ORDER BY at ASC LIMIT ?)', [$excess]);
+        }
     });
 }
 
 function analysis_cache_key($item, $topic) { return sha1(content_image_key($item) . '|' . mb_strtolower(trim($topic))); }
 
 function analysis_cache_get($item, $topic) {
-    $e = load_data(ANALYSIS_CACHE_FILE, [])[analysis_cache_key($item, $topic)] ?? null;
-    return is_array($e) && time() - (int)($e['at'] ?? 0) <= ANALYSIS_CACHE_DAYS * DAY_SECONDS && is_array($e['analysis'] ?? null) ? $e['analysis'] : null;
+    $key = analysis_cache_key($item, $topic);
+    $row = db_one('SELECT analysis, at FROM analysis_cache WHERE key = ? AND at > ?',
+                  [$key, time() - ANALYSIS_CACHE_DAYS * DAY_SECONDS]);
+    return $row ? db_unjson($row['analysis'], null) : null;
 }
 
 // ---- Оценка ----
@@ -385,8 +394,17 @@ function analyze_candidate($item, $poster, $history, $topic) {
         } else {
             try { $a = analyze_content_with_vision($frames, $caption, $history, $topic, $storyboard ? $video : null, PARSER_THINKING, $item['source'] ?? ''); }
             catch (Throwable $e) { cli_echo('-> ИИ не вернул корректную оценку: ' . $e->getMessage()); return false; }
-            $cache_cutoff = time() - ANALYSIS_CACHE_DAYS * DAY_SECONDS;
-            update_data(ANALYSIS_CACHE_FILE, [], fn($c) => array_slice(array_filter([analysis_cache_key($item, $topic) => ['analysis' => $a, 'at' => time()]] + $c, fn($e) => (int)($e['at'] ?? 0) >= $cache_cutoff), 0, ANALYSIS_CACHE_LIMIT, true));
+            db_tx(function () use ($item, $topic, $a) {
+                $key = analysis_cache_key($item, $topic);
+                db_exec('INSERT OR REPLACE INTO analysis_cache (key, analysis, at) VALUES (?, ?, ?)',
+                        [$key, db_json($a), time()]);
+                db_exec('DELETE FROM analysis_cache WHERE at < ?', [time() - ANALYSIS_CACHE_DAYS * DAY_SECONDS]);
+                $count = db_value('SELECT COUNT(*) FROM analysis_cache');
+                if ($count > ANALYSIS_CACHE_LIMIT) {
+                    $excess = $count - ANALYSIS_CACHE_LIMIT;
+                    db_exec('DELETE FROM analysis_cache WHERE key IN (SELECT key FROM analysis_cache ORDER BY at ASC LIMIT ?)', [$excess]);
+                }
+            });
         }
         if (is_spam_content($caption, $a['description'])) { cli_echo('-> Отброшено: явный маркер рекламы или спама.'); return false; }
         if (!PERSONAL_TASTE_ENABLED) $a['rating'] = null;
