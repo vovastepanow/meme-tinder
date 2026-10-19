@@ -1,0 +1,15 @@
+/* Панель управления приложением: закреплена справа по центру высоты, на всех вкладках. Кнопки — те же .btn, что у панели оценок. */
+.controls.control-dock {
+    position: fixed; right: 16px; top: 50%; transform: translateY(-50%); z-index: 40;
+    display: flex; flex-direction: column; gap: 10px; width: auto; margin: 0; padding: 10px;
+    box-sizing: border-box;
+}
+.control-dock .btn { width: 48px; height: 48px; }
+.control-dock .btn-icon { font-size: 22px; }
+
+.control-dock .btn:disabled { opacity: 0.45; cursor: wait; }
+.control-dock .btn.is-busy { opacity: 0.7; }
+/* Узкий экран: панель уходит вниз горизонтальной полосой, чтобы не закрывать карточку */
+@media (max-width: 720px) {
+    .controls.control-dock { top: auto; bottom: 12px; right: 50%; transform: translateX(50%); flex-direction: row; }
+}

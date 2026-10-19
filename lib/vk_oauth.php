@@ -17,7 +17,7 @@ function handle_vk_oauth_status($debug_mode) {
 }
 
 function handle_vk_oauth_start($debug_mode) {
-    if ($debug_mode || !vk_oauth_is_configured()) redirect_to_source_tab('misconfigured');
+    if ($debug_mode || !vk_oauth_is_configured()) redirect_after_vk_oauth('misconfigured');
 
     $config = vk_oauth_config();
     ensure_session_started();
@@ -65,7 +65,7 @@ function handle_vk_oauth_callback() {
         && !empty($oauth_state['state'])
         && hash_equals((string)$oauth_state['state'], $state);
     if (!$state_is_valid || $code === '' || $device_id === '' || !vk_oauth_is_configured()) {
-        redirect_to_source_tab('error');
+        redirect_after_vk_oauth('error');
     }
 
     $config = vk_oauth_config();
@@ -88,9 +88,9 @@ function handle_vk_oauth_callback() {
         $tokens['expires_at'] = time() + max(0, (int)($tokens['expires_in'] ?? 0));
         save_vk_tokens($tokens);
         session_regenerate_id(true);
-        redirect_to_source_tab('connected');
+        redirect_after_vk_oauth('connected');
     } catch (Throwable $error) {
         error_log('VK OAuth callback failed: ' . $error->getMessage());
-        redirect_to_source_tab('error');
+        redirect_after_vk_oauth('error');
     }
 }

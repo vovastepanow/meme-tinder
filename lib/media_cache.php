@@ -86,7 +86,29 @@ function media_cache_existing($url) {
     return $path !== null && is_file($path) ? $url : '';
 }
 
+/** Все адреса из кэша, на которые ссылается запись: главная картинка и видео, а также файлы галереи поста. */
+function media_cache_item_urls($item) {
+    $urls = [];
+    foreach ([$item, ...(is_array($item['gallery'] ?? null) ? $item['gallery'] : [])] as $entry) {
+        if (!is_array($entry)) continue;
+        foreach (['image_local', 'video_local'] as $field) {
+            $url = (string)($entry[$field] ?? '');
+            if ($url !== '') $urls[] = $url;
+        }
+    }
+    return $urls;
+}
+
+/** Показывается ли файл кэша в пуле другого пользователя (файл общий: имя — хэш адреса источника). */
+function media_cache_used_by_others($url) {
+    foreach (all_users_pool_items(app_user_bind() ?: null) as $item) {
+        if (in_array($url, media_cache_item_urls($item), true)) return true;
+    }
+    return false;
+}
+
 function media_cache_remove($url) {
+    if (media_cache_used_by_others($url)) return;
     $path = media_cache_path($url);
     if ($path !== null) @unlink($path);
 }
@@ -99,8 +121,8 @@ function media_cache_cleanup(array $pool, $include_fresh = false) {
     if (!is_dir(MEDIA_CACHE_DIR)) return 0;
     $referenced = [];
     foreach ($pool as $item) {
-        foreach (['image_local', 'video_local'] as $field) {
-            $path = media_cache_path($item[$field] ?? '');
+        foreach (media_cache_item_urls($item) as $url) {
+            $path = media_cache_path($url);
             if ($path !== null) $referenced[basename($path)] = true;
         }
     }
@@ -121,12 +143,11 @@ function media_cache_cleanup(array $pool, $include_fresh = false) {
 function media_cache_release_removed(array $before, array $after) {
     $kept = [];
     foreach ($after as $item) {
-        foreach (['image_local', 'video_local'] as $field) $kept[(string)($item[$field] ?? '')] = true;
+        foreach (media_cache_item_urls($item) as $url) $kept[$url] = true;
     }
     foreach ($before as $item) {
-        foreach (['image_local', 'video_local'] as $field) {
-            $url = (string)($item[$field] ?? '');
-            if ($url !== '' && !isset($kept[$url])) media_cache_remove($url);
+        foreach (media_cache_item_urls($before_item = $item) as $url) {
+            if (!isset($kept[$url])) media_cache_remove($url);
         }
     }
 }

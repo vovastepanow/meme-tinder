@@ -53,13 +53,65 @@ export function pluralRu(count, one, few, many) {
 // ---- Журнал приложения ----
 
 const CONSOLE_MAX_LINES = 200;
-const consoleState = { lineCount: 0, parserLines: [], followsTail: true };
+const consoleState = { lineCount: 0, parserLines: [], waitingShown: false, followsTail: true };
 
 // Строки обмена с моделью (см. record_ai_exchange в http_client.php):
 // "[ИИ → model] запрос", "[ИИ ← model] ответ", "[ИИ мысли model] начало размышлений", "[ИИ мысли+ model] продолжение".
 const AI_LOG_LINE_PATTERN = /^\[ИИ (→|←|мысли\+?) ([^\]]+)\] ?([\s\S]*)$/;
 const AI_LABELS = { '→': 'запрос →', '←': 'ответ ←', 'мысли': 'размышления' };
 const AI_CLASSES = { '→': 'ai-request', '←': 'ai-response', 'мысли': 'ai-thinking' };
+
+// Ссылки в строках журнала: «[текст](https://…)» от парсера, голые адреса, доски, треды и посты Двача,
+// каналы @telegram и паблики ВКонтакте из строк «Парсинг …». Голая доска «/b/» — только в строках про Двач.
+const LOG_LINK_PATTERN = new RegExp([
+    String.raw`\[(?<mdText>[^\]\n]+)\]\((?<mdUrl>https?:\/\/[^\s)]+)\)`,
+    String.raw`(?<url>https?:\/\/[^\s<>"«»]+)`,
+    String.raw`(?<dvach>Двача? )\/(?<board>[a-z0-9]{1,10})\/(?: · тред #(?<thread>\d+)(?: · пост #(?<post>\d+))?)?`,
+    String.raw`(?<![\w@/])@(?<tg>[A-Za-z][A-Za-z0-9_]{4,31})\b`,
+    String.raw`(?<vkPrefix>Парсинг ВКонтакте )(?<vk>[A-Za-z0-9_.]{2,64}?)(?=\.\.\.|[\s,]|$)`,
+    String.raw`(?<=^|[\s,(:])\/(?<boardOnly>[a-z0-9]{1,10})\/(?=[\s,.;)]|$)`
+].join('|'), 'gu');
+const DVACH_URL = 'https://2ch.hk';
+
+function logLink(href, text) {
+    return el('a', {
+        className: 'console-link', href, textContent: text, target: '_blank', rel: 'noopener noreferrer',
+        onclick: event => event.stopPropagation()   // клик по ссылке не сворачивает и не разворачивает «пузырь» обмена с моделью
+    });
+}
+
+/** Текст строки журнала → текст и ссылки (только http/https, всё остальное остаётся текстом). */
+function linkify(text) {
+    const nodes = [];
+    const mentionsDvach = text.includes('Двач');
+    let last = 0;
+    for (const match of text.matchAll(LOG_LINK_PATTERN)) {
+        const g = match.groups;
+        if (g.boardOnly && !mentionsDvach) continue;
+        nodes.push(text.slice(last, match.index));
+        last = match.index + match[0].length;
+        if (g.mdUrl) {
+            nodes.push(logLink(g.mdUrl, `[${g.mdText}]`));
+        } else if (g.url) {
+            // Точка или скобка в конце обычно завершают предложение, а не адрес
+            const url = g.url.replace(/[.,;:!?)\]]+$/, '');
+            nodes.push(logLink(url, url), g.url.slice(url.length));
+        } else if (g.board) {
+            const board = `${DVACH_URL}/${g.board}/`;
+            nodes.push(g.dvach, logLink(board, `/${g.board}/`));
+            if (g.thread) nodes.push(' · тред ', logLink(`${board}res/${g.thread}.html`, `#${g.thread}`));
+            if (g.post) nodes.push(' · пост ', logLink(`${board}res/${g.thread}.html#${g.post}`, `#${g.post}`));
+        } else if (g.tg) {
+            nodes.push(logLink(`https://t.me/${g.tg}`, `@${g.tg}`));
+        } else if (g.vk) {
+            nodes.push(g.vkPrefix, logLink(`https://vk.com/${g.vk}`, g.vk));
+        } else {
+            nodes.push(logLink(`${DVACH_URL}/${g.boardOnly}/`, `/${g.boardOnly}/`));
+        }
+    }
+    nodes.push(text.slice(last));
+    return nodes.filter(node => node !== '');
+}
 
 /** Блок размышлений, который модель ещё дописывает: продолжения ('мысли+') добавляются в него. */
 let liveThinkingEntry = null;
@@ -72,10 +124,9 @@ function finishLiveThinking() {
 /** Обмен с моделью показывается «пузырём»: запрос, ответ или размышления, свёрнутые до 4 строк. */
 function renderAiConsoleEntry(entry, timestamp, direction, model, text) {
     entry.classList.add('ai-message', AI_CLASSES[direction] || 'ai-response');
-    entry.title = 'Клик — развернуть или свернуть';
     entry.append(
         el('span', { className: 'ai-message-meta', textContent: `${timestamp} · ${AI_LABELS[direction] || direction} ${model}` }),
-        el('span', { className: 'ai-message-text', textContent: text })
+        el('span', { className: 'ai-message-text' }, ...linkify(text))
     );
     entry.addEventListener('click', () => entry.classList.toggle('is-expanded'));
 }
@@ -102,7 +153,7 @@ export function log(message) {
     const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const aiExchange = AI_LOG_LINE_PATTERN.exec(message);
     if (!aiExchange) {
-        appendConsoleEntry(el('p', { className: 'activity-console-line', textContent: `${timestamp} ${message}` }));
+        appendConsoleEntry(el('p', { className: 'activity-console-line' }, `${timestamp} `, ...linkify(message)));
         scrollConsoleToTail();
         return;
     }
@@ -132,6 +183,7 @@ export function setConsoleStatus(text, active = false) {
 /** Начинает новый сеанс журнала парсера: следующая порция строк будет выведена целиком. */
 export function resetParserActivity() {
     consoleState.parserLines = [];
+    consoleState.waitingShown = false;
 }
 
 /**
@@ -151,7 +203,11 @@ export function appendParserActivity(activity) {
     }
     consoleState.parserLines = incoming;
     const newLines = incoming.slice(overlap);
-    if (!previous.length && !incoming.length) newLines.push('Запуск парсера и загрузка источников...');
+    // Пока парсер ничего не написал (идёт загрузка моделей), напоминание показываем один раз, а не при каждом опросе.
+    if (!previous.length && !incoming.length && !consoleState.waitingShown) {
+        consoleState.waitingShown = true;
+        newLines.push('Запуск парсера и загрузка источников...');
+    }
     newLines.forEach(log);
 }
 
@@ -175,8 +231,15 @@ export function initializeActivityConsole() {
 
 /** Подписи действий API для журнала. Частые фоновые запросы (get_current_item, parser_status, settings, vk_oauth_status) не логируются. */
 const ACTION_LOG_LABELS = {
+    telegram_publish: 'Отправка поста в Telegram…',
     refresh_content: 'Запущен поиск контента',
     save_topic: 'Сохранение темы поиска',
+    save_filters: 'Сохранение фильтров подбора',
+    topic_parent: 'Сохранение общей темы',
+    topic_reprofile: 'Пересоставление профиля темы',
+    control_search: 'Поиск контента',
+    control_sources: 'Обновление базы источников',
+    app_stop: 'Остановка приложения',
     analyze_image: 'Запущен анализ изображения',
     suggest_sources: 'Поиск нового источника',
     vote: 'Сохранение оценки',
@@ -199,6 +262,13 @@ export class ApiError extends Error {
     }
 }
 
+/** Идентификатор этой вкладки (новый при каждой загрузке страницы): к нему привязаны фоновые процессы. */
+export const TAB_ID = (() => {
+    const bytes = new Uint8Array(16);
+    (globalThis.crypto || { getRandomValues: array => array.map(() => Math.floor(Math.random() * 256)) }).getRandomValues(bytes);
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+})();
+
 export function apiUrl(action, params = {}) {
     const query = new URLSearchParams({ action, ...params });
     if (DEBUG_MODE) query.set('debug', '1');
@@ -214,7 +284,7 @@ export async function api(action, { body, params } = {}) {
     if (ACTION_LOG_LABELS[action]) log(ACTION_LOG_LABELS[action]);
     const options = { method: body === undefined ? 'GET' : 'POST', headers: {} };
     if (options.method === 'POST') {
-        options.headers['X-Content-Tinder'] = '1';
+        options.headers['X-Postmaker'] = '1';
         if (body instanceof FormData) {
             options.body = body;
         } else if (body !== null) {
@@ -282,7 +352,7 @@ const tabOpenHandlers = {};
 
 /** Регистрирует действие при открытии вкладки (например, загрузку данных). */
 export function onTabOpen(tabId, handler) {
-    tabOpenHandlers[tabId] = handler;
+    (tabOpenHandlers[tabId] ||= []).push(handler);
 }
 
 export function switchTab(tabId) {
@@ -295,7 +365,7 @@ export function switchTab(tabId) {
         tab.classList.toggle('active', isActive);
         tab.setAttribute('aria-selected', String(isActive));
     });
-    tabOpenHandlers[tabId]?.();
+    tabOpenHandlers[tabId]?.forEach(handler => handler());
 }
 
 export function initializeTabs() {

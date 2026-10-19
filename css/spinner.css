@@ -1,0 +1,67 @@
+/* Индикатор загрузки: радужное кольцо с вырезанным сектором. Цвет и толщина — те же, что у переливающейся рамки вкладок
+   (conic-gradient(--rainbow), --ring-active-width); кольцо крутится, а цвета переливаются своим кругом, как в рамке.
+   Показывается там, где идёт загрузка: поверх картинок и видео (класс is-loading у контейнера), в строках «Загрузка…» и на весь
+   экран, пока приложение запускается. */
+@property --spinner-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+}
+@keyframes spinner-turn { to { --spinner-angle: 360deg; } }
+
+:root { --spinner-size: 34px; --spinner-width: var(--ring-active-width, 2.5px); --spinner-gap: 90deg; }
+
+.spinner,
+.status-msg.is-loading::before,
+.is-loading::before {
+    content: '';
+    display: block;
+    box-sizing: border-box;
+    width: var(--spinner-size);
+    height: var(--spinner-size);
+    border-radius: 50%;
+    background: conic-gradient(from var(--tab-angle), var(--rainbow));
+    /* кольцо толщиной --spinner-width × дуга без сектора --spinner-gap */
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--spinner-width) - 0.5px), #000 calc(100% - var(--spinner-width))),
+                  conic-gradient(from var(--spinner-angle), #000 0 calc(360deg - var(--spinner-gap)), transparent 0);
+    -webkit-mask-composite: source-in;
+    mask: radial-gradient(farthest-side, transparent calc(100% - var(--spinner-width) - 0.5px), #000 calc(100% - var(--spinner-width))),
+          conic-gradient(from var(--spinner-angle), #000 0 calc(360deg - var(--spinner-gap)), transparent 0);
+    mask-composite: intersect;
+    animation: tab-rainbow-spin 3s linear infinite, spinner-turn 0.9s linear infinite;
+    pointer-events: none;
+}
+.spinner-lg { --spinner-size: 52px; }
+.spinner-sm { --spinner-size: 20px; }
+
+/* Поверх медиа: по центру контейнера */
+.is-loading { position: relative; }
+.is-loading::before {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    margin: calc(var(--spinner-size) / -2) 0 0 calc(var(--spinner-size) / -2);
+    z-index: 5;
+}
+.image-viewer-stage.is-loading { min-width: 120px; min-height: 120px; }
+
+/* В строках «Загрузка…», «Ищем контент…»: кольцо над текстом */
+.status-msg.is-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.status-msg.is-loading::before { position: static; margin: 0; }
+.status-msg.is-loading[hidden] { display: none; }
+
+/* Запуск приложения: пока не готова первая вкладка */
+.app-loading {
+    position: fixed;
+    inset: 0;
+    z-index: 5000;
+    display: grid;
+    place-items: center;
+    background: var(--bg);
+    transition: opacity 0.25s ease;
+}
+.app-loading.is-done { opacity: 0; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+    .spinner, .status-msg.is-loading::before, .is-loading::before { animation: none; }
+}

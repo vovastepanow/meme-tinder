@@ -1,5 +1,6 @@
 // database.js — вкладка «Базы данных»: список записей, добавление, правка и удаление.
-import { $, DEBUG_MODE, api, el, log, onTabOpen, pluralRu, safeSourcePostUrl, switchTab, watchParser } from './core.js';
+import { $, DEBUG_MODE, api, el, log, pluralRu, safeSourcePostUrl, watchParser } from './core.js';
+import { onAccountSection, openAccountSection } from './account.js';
 
 const state = {
     databases: [],
@@ -52,7 +53,7 @@ function recordSummary(record) {
     const preview = record.text || record.name || record.title || record.source || record.url || record.image || '';
     const relevance = record.relevance !== undefined && record.relevance !== null ? `по теме ${record.relevance}%` : '';
     const rating = record.rating ?? record.rating_assigned;
-    const details = [rating !== undefined ? `прогноз ${rating}%` : '', relevance, record.topic ? `тема: ${record.topic}` : '', record.source || '', record.why_relevant || '', record.description || '']
+    const details = [rating != null ? `прогноз ${rating}%` : '', relevance, record.topic ? `тема: ${record.topic}` : '', record.source || '', record.why_relevant || '', record.description || '']
         .filter(Boolean)
         .join(' · ');
     return [preview || JSON.stringify(record), details].filter(Boolean).join('\n');
@@ -136,7 +137,7 @@ function openCreator() {
 /** Открывает редактор с заготовкой новой записи (кнопка «Добавить вручную» на пустом пуле). */
 export async function openNewItemEditor() {
     if (DEBUG_MODE) return;
-    switchTab('database-tab');
+    openAccountSection('databases');
     await loadDatabaseOptions();
     if (!state.ready) return;
     $('database-select').value = 'content_pool';
@@ -173,9 +174,9 @@ async function saveRecord(event) {
     }
 }
 
-/** Очистка всех баз: сервер оставляет пустые пул и историю, стандартный каталог источников и сразу запускает поиск. */
+/** Очистка ваших данных: сервер оставляет пустые пул и историю и сразу запускает поиск. Общий каталог источников не трогает. */
 async function resetAllDatabases() {
-    const question = 'Очистить все базы? Пул контента и история оценок станут пустыми, каталог источников вернётся к стандартному, сохранённые картинки удалятся. Тема поиска останется. Это действие нельзя отменить.';
+    const question = 'Очистить ваши данные? Пул контента и история оценок станут пустыми, сохранённые картинки удалятся. Тема поиска и общий каталог источников останутся. Это действие нельзя отменить.';
     if (!window.confirm(question)) return;
     const button = $('database-reset');
     button.disabled = true;
@@ -206,10 +207,7 @@ let onDatabasesReset = null;
 
 export function initializeDatabaseTab({ onReset } = {}) {
     onDatabasesReset = onReset;
-    if (DEBUG_MODE) {
-        document.querySelector('.tab-btn[data-tab="database-tab"]').hidden = true;
-        return;
-    }
+    if (DEBUG_MODE) return; // раздел «Базы данных» в кабинете скрывает account.js
     $('database-select').addEventListener('change', loadCollections);
     $('database-collection-select').addEventListener('change', loadRecords);
     $('database-refresh').addEventListener('click', loadRecords);
@@ -217,5 +215,5 @@ export function initializeDatabaseTab({ onReset } = {}) {
     $('database-edit-form').addEventListener('submit', saveRecord);
     $('database-cancel').addEventListener('click', () => $('database-edit-dialog').close());
     $('database-reset').addEventListener('click', resetAllDatabases);
-    onTabOpen('database-tab', loadDatabaseOptions);
+    onAccountSection('databases', loadDatabaseOptions);
 }

@@ -1,4 +1,4 @@
-# Content Tinder: наружу открыты только интерфейс (index.html, js/, css/) и API (index.php).
+# Postmaker: наружу открыты только интерфейс (index.html, js/, css/, fonts/, img/) и API (index.php).
 # Работает, если для каталога сайта в Apache включено AllowOverride All (или хотя бы FileInfo и AuthConfig).
 
 Options -Indexes
@@ -21,8 +21,21 @@ Options -Indexes
 </IfModule>
 
 # Интерфейс меняется вместе с кодом: браузер каждый раз сверяет версию (ETag) и не держит старые JS/CSS.
+# Файлы кэша медиа (media_cache/) неизменяемы — имя это хэш исходного адреса: браузер хранит их неделю и не перепроверяет,
+# поэтому пролистанные и предзагруженные карточки на медленном интернете не качаются заново.
 <IfModule mod_headers.c>
     <FilesMatch "\.(js|css|html)$">
         Header set Cache-Control "no-cache"
     </FilesMatch>
+    <If "%{REQUEST_URI} =~ m#/media_cache/#">
+        Header set Cache-Control "public, max-age=604800, immutable"
+    </If>
+</IfModule>
+
+# Редактор поста загружает на сервер видео и картинки перед отправкой в Telegram (до 50 МБ на файл, до 10 файлов в альбоме).
+<IfModule mod_php.c>
+    php_value upload_max_filesize 64M
+    php_value post_max_size 400M
+    php_value max_file_uploads 20
+    php_value max_input_time 300
 </IfModule>

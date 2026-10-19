@@ -33,7 +33,7 @@ function download_video_temp($url, $max_bytes = VIDEO_MAX_BYTES) {
         CURLOPT_CONNECTTIMEOUT => 8,
         CURLOPT_TIMEOUT => 90,
         CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
-        CURLOPT_USERAGENT => 'ContentTinder/1.0',
+        CURLOPT_USERAGENT => 'Postmaker/1.0',
         CURLOPT_WRITEFUNCTION => function ($curl, $chunk) use (&$size, $max_bytes, $handle) {
             $size += strlen($chunk);
             if ($size > $max_bytes) return 0; // файл слишком большой — прерываем загрузку
@@ -137,27 +137,70 @@ function video_codec($video_path) {
     return strtolower(trim((string)@shell_exec($command)));
 }
 
+const VIDEO_LIGHT_BYTES = 6 * 1024 * 1024;   // ролик тяжелее — пережимается для показа: на медленном интернете он не грузится
+const VIDEO_LIGHT_HEIGHT = 720;              // и больше 720p по короткой стороне — тоже (в карточке и на телефоне больше не нужно)
+
+/** Короткая сторона кадра ролика (у вертикального — ширина; 0, если узнать не удалось). */
+function video_short_side($video_path) {
+    $command = 'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 ' . escapeshellarg($video_path) . ' 2>/dev/null';
+    $sides = array_filter(array_map('intval', explode(',', trim((string)@shell_exec($command)))));
+    return $sides ? min($sides) : 0;
+}
+
+/** Лежит ли у MP4 индекс (moov) в начале файла: тогда браузер начинает играть, не скачав ролик целиком. */
+function mp4_has_fast_start($video_path) {
+    $handle = @fopen($video_path, 'rb');
+    if (!$handle) return true;
+    $offset = 0;
+    $size = filesize($video_path);
+    while ($offset + 8 <= $size) {   // атомы верхнего уровня: [размер 4 байта][тип 4 байта]
+        fseek($handle, $offset);
+        $header = fread($handle, 16);
+        if (strlen($header) < 8) break;
+        $atom_size = unpack('N', substr($header, 0, 4))[1];
+        $type = substr($header, 4, 4);
+        if ($type === 'moov') { fclose($handle); return true; }
+        if ($type === 'mdat') { fclose($handle); return false; }
+        if ($atom_size === 1 && strlen($header) >= 16) $atom_size = unpack('J', substr($header, 8, 8))[1];
+        if ($atom_size < 8) break;
+        $offset += $atom_size;
+    }
+    fclose($handle);
+    return true;
+}
+
 /**
- * Если кодек ролика браузер не воспроизведёт, перекодирует его в H.264 + AAC (MP4 с быстрым стартом).
- * Возвращает путь к файлу, который можно сохранять в кэш: исходный или новый временный
- * (его потом удаляет вызывающий — он отличается от $video_path). Без ffmpeg возвращает исходный.
+ * Ролик в виде, удобном браузеру: кодек, который он воспроизводит (иначе перекодируется в H.264 + AAC), не тяжелее
+ * VIDEO_LIGHT_BYTES и не выше VIDEO_LIGHT_HEIGHT (иначе пережимается в 720p), у MP4 — быстрый старт (иначе переупаковывается
+ * без перекодирования). Возвращает путь к файлу для кэша: исходный или новый временный (его потом удаляет вызывающий —
+ * он отличается от $video_path). Без ffmpeg или при ошибке возвращает исходный.
  */
 function browser_playable_video($video_path) {
     $ffmpeg = ffmpeg_binary();
     if ($ffmpeg === '' || !is_file($video_path)) return $video_path;
     $codec = video_codec($video_path);
-    if ($codec === '' || in_array($codec, BROWSER_VIDEO_CODECS, true)) return $video_path;
+    $unplayable = $codec !== '' && !in_array($codec, BROWSER_VIDEO_CODECS, true);
+    $heavy = filesize($video_path) > VIDEO_LIGHT_BYTES || video_short_side($video_path) > VIDEO_LIGHT_HEIGHT;
+    $is_mp4 = strtolower(substr((string)@file_get_contents($video_path, false, null, 4, 4), 0, 4)) === 'ftyp';
+    $slow_start = $is_mp4 && !mp4_has_fast_start($video_path);
+    if (!$unplayable && !$heavy && !$slow_start) return $video_path;
 
-    echo "-> Видео в кодеке {$codec}: браузер его может не воспроизвести, перекодирую в H.264...\n";
     $out = tempnam(sys_get_temp_dir(), 'ct-h264-');
     if ($out === false) return $video_path;
-    $command = escapeshellarg($ffmpeg) . ' -v error -y -i ' . escapeshellarg($video_path)
-        . ' -map 0:v:0 -map 0:a:0? -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p'
-        . ' -c:a aac -b:a 128k -movflags +faststart -f mp4 ' . escapeshellarg($out) . ' 2>/dev/null';
+    if ($unplayable || $heavy) {
+        echo "-> Видео " . ($unplayable ? "в кодеке {$codec}: браузер его может не воспроизвести" : 'тяжёлое (' . round(filesize($video_path) / 1048576, 1) . ' МБ)')
+            . " — перекодирую в H.264 до " . VIDEO_LIGHT_HEIGHT . "p...\n";
+        $command = escapeshellarg($ffmpeg) . ' -v error -y -i ' . escapeshellarg($video_path)
+            . " -map 0:v:0 -map 0:a:0? -vf \"scale='if(gt(iw,ih),-2,min(" . VIDEO_LIGHT_HEIGHT . ",iw))':'if(gt(iw,ih),min(" . VIDEO_LIGHT_HEIGHT . ",ih),-2)'\" -c:v libx264 -preset veryfast -crf 27 -pix_fmt yuv420p"
+            . ' -c:a aac -b:a 96k -movflags +faststart -f mp4 ' . escapeshellarg($out) . ' 2>/dev/null';
+    } else {
+        // Только переставить индекс в начало файла — секунды, без потери качества
+        $command = escapeshellarg($ffmpeg) . ' -v error -y -i ' . escapeshellarg($video_path) . ' -map 0 -c copy -movflags +faststart -f mp4 ' . escapeshellarg($out) . ' 2>/dev/null';
+    }
     exec($command, $output, $exit_code);
-    if ($exit_code !== 0 || !is_file($out) || filesize($out) === 0) {
+    if ($exit_code !== 0 || !is_file($out) || filesize($out) === 0 || ($heavy && !$unplayable && filesize($out) >= filesize($video_path))) {
         @unlink($out);
-        echo "-> Перекодировать не удалось, сохраняю как есть.\n";
+        if ($unplayable) echo "-> Перекодировать не удалось, сохраняю как есть.\n";
         return $video_path;
     }
     return $out;

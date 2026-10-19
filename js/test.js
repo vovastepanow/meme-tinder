@@ -29,9 +29,10 @@ function onUrlInput() {
 }
 
 function renderResult(data) {
-    $('test-rating').textContent = `${Number(data.rating)}%`;
+    $('test-rating').textContent = data.rating == null ? '' : `${Number(data.rating)}%`;
+    $('test-rating').hidden = data.rating == null;
     $('test-relevance').textContent = `По теме: ${Number(data.relevance)}%`;
-    $('test-model').textContent = `Тема «${data.topic}» · прогноз по вашим оценкам · ${data.model}`;
+    $('test-model').textContent = `Тема «${data.topic}» · ${data.rating == null ? '' : 'прогноз по вашим оценкам · '}${data.model}`;
     $('test-description').replaceChildren(el('strong', { textContent: 'Описание ИИ:' }), ` ${data.description || 'Описание не получено'}`);
     $('test-why').textContent = data.why_relevant ? `Почему по теме: ${data.why_relevant}` : '';
     show('test-result');

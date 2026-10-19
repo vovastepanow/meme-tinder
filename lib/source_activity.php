@@ -9,9 +9,9 @@
 const DAY_SECONDS = 86400;
 
 /** Пост слишком старый, чтобы предлагать его пользователю. Посты без даты не отбрасываются. */
-function is_post_outdated($posted_at, $now = null) {
+function is_post_outdated($posted_at, $now = null, $max_days = CONTENT_MAX_AGE_DAYS) {
     $posted_at = (int)$posted_at;
-    return $posted_at > 0 && ($now ?? time()) - $posted_at > CONTENT_MAX_AGE_DAYS * DAY_SECONDS;
+    return $posted_at > 0 && ($now ?? time()) - $posted_at > $max_days * DAY_SECONDS;
 }
 
 /**
@@ -58,14 +58,15 @@ function is_source_frozen(array $entry, $now = null) {
 
 /**
  * Обновляет запись каталога по свежей активности: замораживает неактивный источник на
- * SOURCE_FROZEN_RECHECK_DAYS дней или размораживает ожившего. Возвращает [запись, событие],
+ * SOURCE_FROZEN_RECHECK_DAYS дней или размораживает ожившего. $extra_reason — дополнительная причина заморозки
+ * (мёртвая аудитория, см. source_dead_audience_reason). Возвращает [запись, событие],
  * где событие — 'frozen', 'still_frozen', 'revived' или null.
  */
-function apply_source_activity(array $entry, $activity, $now = null) {
+function apply_source_activity(array $entry, $activity, $now = null, $extra_reason = null) {
     $now = $now ?? time();
     $was_frozen = isset($entry['frozen_until']);
     if ($activity !== null) $entry['activity'] = $activity;
-    $reason = source_inactivity_reason($activity, $now);
+    $reason = $extra_reason ?? source_inactivity_reason($activity, $now);   // extra_reason — конкретнее: канала нет, мёртвая аудитория
     if ($reason !== null) {
         $entry['frozen_until'] = $now + SOURCE_FROZEN_RECHECK_DAYS * DAY_SECONDS;
         $entry['frozen_reason'] = $reason;

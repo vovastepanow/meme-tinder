@@ -1,0 +1,98 @@
+/* Вкладка «🌳 Дерево»: выбор и смена тем. Узлы и линии рисует CSS, сворачивание — нативные details, без анимаций. */
+
+.view-panel.tree-panel { max-width: 1100px; align-items: stretch; padding: 16px; }
+.tree-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.tree-head-text { display: grid; gap: 4px; margin-right: auto; min-width: 0; }
+.tree-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
+.tree-current { margin: 0; font-size: 13px; color: var(--muted); }
+.tree-current strong { color: var(--text); font-weight: 600; }
+.tree-form { display: grid; gap: 6px; margin-bottom: 12px; }
+.tree-form > label { color: var(--muted); font-size: 12px; }
+.tree-layout { display: grid; gap: 18px; align-items: start; margin-top: 8px; }
+.tree-root.is-busy { opacity: 0.45; pointer-events: none; }
+.tree-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 14px; font-size: 12px; color: var(--faint); }
+
+.tree-root { overflow-x: auto; padding-bottom: 8px; }
+.tree, .tree-children { list-style: none; margin: 0; padding: 0; }
+/* Вложенные уровни сдвигаются вправо; вертикальная линия идёт от родителя к детям. */
+.tree-children { margin-left: 22px; padding-left: 14px; position: relative; }
+.tree-children::before { content: ''; position: absolute; left: 0; top: 0; bottom: 18px; border-left: 1px solid var(--line-strong); }
+
+.tree-node { position: relative; padding: 4px 0; }
+/* Горизонтальная линия к каждому узлу уровня. */
+.tree-children > .tree-node::before { content: ''; position: absolute; left: -14px; top: 18px; width: 14px; border-top: 1px solid var(--line-strong); }
+/* Последний ребёнок: вертикальная линия заканчивается на его уровне. */
+.tree-children > .tree-node:last-child { padding-bottom: 4px; }
+
+.tree-label {
+    display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+    padding: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--surface); color: var(--muted); font-size: 13px; line-height: 1.3;
+    cursor: default; user-select: none;
+}
+.tree-node.tree-broad > .tree-label, .tree-node.tree-broad > details > summary > .tree-label {
+    border-color: var(--line-strong); color: var(--text); font-weight: 600;
+}
+.tree-node.tree-narrow .tree-label { font-weight: 400; }
+
+/* Ветка с детьми: summary кликабельна; стрелка — псевдоэлемент, без картинок. */
+.tree-branch > summary { list-style: none; cursor: pointer; }
+.tree-branch > summary::-webkit-details-marker { display: none; }
+.tree-branch > summary > .tree-label::before {
+    content: '▸'; display: inline-block; width: 10px; color: var(--faint); transition: transform 0.15s ease;
+}
+.tree-branch[open] > summary > .tree-label::before { transform: rotate(90deg); }
+.tree-branch > summary:hover > .tree-label { border-color: var(--muted); background: var(--surface-2); }
+.tree-branch > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
+
+/* Текущая тема: ярче остальных, у неё «📍» и рамка акцентом. */
+.tree-node.is-current > .tree-label, .tree-node.is-current > details > summary > .tree-label {
+    border-color: var(--accent); color: var(--text); background: var(--surface-3);
+}
+
+.tree-icon { flex: none; font-size: 14px; line-height: 1; }
+.tree-name { min-width: 0; overflow-wrap: anywhere; }
+.tree-count {
+    flex: none; min-width: 22px; padding: 1px 7px; border-radius: 999px; text-align: center;
+    background: var(--surface-3); color: var(--text); font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.tree-count.is-empty { background: transparent; color: var(--faint); border: 1px dashed var(--line-strong); }
+.tree-note { flex: none; color: var(--faint); font-size: 11px; }
+
+@media (max-width: 480px) {
+    .tree-children { margin-left: 14px; padding-left: 10px; }
+    .tree-children > .tree-node::before { left: -10px; width: 10px; }
+    .tree-label { padding: 5px 9px; font-size: 12px; }
+    .tree-note { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .tree-branch > summary > .tree-label::before { transition: none; } }
+
+/* Панель выбранной темы: описание, критерии, действия. На широком экране — справа от дерева, на узком — под ним. */
+.tree-detail {
+    display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--surface); min-width: 0;
+}
+.tree-detail-empty { margin: 0; color: var(--faint); font-size: 13px; }
+.tree-detail-title { margin: 0; font-size: 17px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.tree-detail-kind { margin: 0; font-size: 12px; color: var(--muted); }
+.tree-facts { display: grid; gap: 10px; margin: 0; }
+.tree-row { display: grid; gap: 2px; margin: 0; }
+.tree-row dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); }
+.tree-row dd { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; }
+.tree-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.tree-actions button { min-height: 36px; font-size: 13px; }
+.tree-parent-editor { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.tree-parent-editor[hidden] { display: none; }
+.tree-parent-editor select, .tree-parent-editor input {
+    flex: 1 1 160px; min-width: 0; min-height: 36px; padding: 0 10px;
+    border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text);
+}
+.tree-parent-editor input[hidden] { display: none; }
+.tree-node.is-selected > .tree-label, .tree-node.is-selected > details > summary > .tree-label {
+    border-color: var(--muted); background: var(--surface-2); color: var(--text);
+}
+
+@media (min-width: 900px) {
+    .tree-layout { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
+    .tree-detail { position: sticky; top: 16px; }
+}

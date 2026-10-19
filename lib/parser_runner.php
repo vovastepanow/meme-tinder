@@ -58,7 +58,12 @@ function launch_content_parser_locked($state_file, $force) {
     if ($php_binary === '' || !is_executable($php_binary)) $php_binary = '/usr/bin/php';
     if (!is_executable($php_binary)) return 'unavailable';
 
-    $command = 'nohup ' . escapeshellarg($php_binary) . ' ' . escapeshellarg(PARSER_SCRIPT) .
+    // Парсер привязывается к вкладке, которая сейчас ведёт сессию: закрылась вкладка — парсер остановится.
+    // Живой вкладки нет (запрос от закрытой или ещё не открывшейся страницы, бота, предпросмотра ссылки) — не запускаем:
+    // без привязки парсер считал бы себя ручным запуском из консоли, не останавливался бы и держал слот очереди.
+    $tab = tab_session_current_tab();
+    if ($tab === '') return 'no_session';
+    $command = 'nohup ' . escapeshellarg($php_binary) . ' ' . escapeshellarg(PARSER_SCRIPT) . ' ' . escapeshellarg($tab) . ' ' . escapeshellarg(app_user_id()) .
         ' > ' . escapeshellarg(parser_runtime_file('.log')) . ' 2>&1 < /dev/null & echo $!';
     exec($command, $output, $exit_code);
     $pid = (int)trim($output[0] ?? '0');
@@ -66,4 +71,43 @@ function launch_content_parser_locked($state_file, $force) {
 
     file_put_contents($state_file, json_encode(['pid' => $pid, 'started_at' => time()]), LOCK_EX);
     return 'started';
+}
+
+/** Останавливает работающий парсер (SIGTERM, через 3 секунды SIGKILL). Обрыв соединения останавливает и генерацию в Ollama. */
+function stop_content_parser_locked($state_file) {
+    $state = json_decode(@file_get_contents($state_file), true) ?: [];
+    $pid = (int)($state['pid'] ?? 0);
+    if (!content_parser_process_running($pid)) return false;
+    $signal = function ($number) use ($pid) {
+        if (function_exists('posix_kill')) @posix_kill($pid, $number);
+        else @exec('kill -' . (int)$number . ' ' . (int)$pid . ' 2>/dev/null');
+    };
+    $signal(15);
+    for ($i = 0; $i < 30 && content_parser_process_running($pid); $i++) usleep(100000);
+    if (content_parser_process_running($pid)) $signal(9);
+    return true;
+}
+
+function with_parser_lock(callable $action) {
+    $lock_handle = @fopen(parser_runtime_file('.json') . '.lock', 'c+');
+    if (!$lock_handle || !flock($lock_handle, LOCK_EX)) return null;
+    try {
+        return $action(parser_runtime_file('.json'));
+    } finally {
+        flock($lock_handle, LOCK_UN);
+        fclose($lock_handle);
+    }
+}
+
+function stop_content_parser() {
+    return (bool)with_parser_lock('stop_content_parser_locked');
+}
+
+/** Останавливает старый парсер и запускает новый (привязанный к вкладке, которая сейчас ведёт сессию). */
+function restart_content_parser() {
+    if (!function_exists('exec')) return 'unavailable';
+    return with_parser_lock(function ($state_file) {
+        stop_content_parser_locked($state_file);
+        return launch_content_parser_locked($state_file, true);
+    }) ?? 'unavailable';
 }

@@ -2,7 +2,7 @@
 // Ответы API и общие проверки запросов.
 
 /** Заголовок, который интерфейс ставит на каждый POST. Чужой сайт не может отправить его без CORS-разрешения. */
-const API_REQUEST_HEADER = 'HTTP_X_CONTENT_TINDER';
+const API_REQUEST_HEADER = 'HTTP_X_POSTMAKER';
 
 const VK_REDIRECT_RESULTS = ['connected', 'misconfigured', 'error'];
 
@@ -19,9 +19,9 @@ function json_error($message, $status = 400): never {
     json_response(['status' => 'error', 'message' => $message], $status);
 }
 
-function redirect_to_source_tab($vk_result): never {
+function redirect_after_vk_oauth($vk_result): never {
     if (!in_array($vk_result, VK_REDIRECT_RESULTS, true)) $vk_result = 'error';
-    header('Location: index.html?vk=' . $vk_result . '#source-tab');
+    header('Location: index.html?vk=' . $vk_result . '#account');   // подключение соцсетей — в личном кабинете
     exit;
 }
 
@@ -32,7 +32,7 @@ function ensure_session_started() {
 /** Защита от CSRF: изменяющие запросы принимаются только от собственного интерфейса. */
 function require_api_request_header() {
     if (($_SERVER[API_REQUEST_HEADER] ?? '') !== '1') {
-        json_error('Запрос отклонён: отсутствует заголовок X-Content-Tinder.', 403);
+        json_error('Запрос отклонён: отсутствует заголовок X-Postmaker.', 403);
     }
 }
 

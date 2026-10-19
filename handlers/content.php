@@ -1,11 +1,11 @@
 <?php
-// Обработчики вкладок «Оценка контента» и «Тест ИИ»: текущая запись, голоса, тема поиска, состояние парсера.
+// Обработчики вкладок «Подбор» и «Тест ИИ»: текущая запись, голоса, тема поиска, состояние парсера.
 
 const CONTENT_POSTPONE_VOTE = 'postpone';
 const CONTENT_PRELOAD_COUNT = 3; // сколько следующих картинок браузер подгружает заранее
 
 function handle_get_current_item($debug_mode) {
-    $pool = $debug_mode ? debug_state()['pool'] : load_data(POOL_FILE, []);
+    $pool = $debug_mode ? debug_state()['pool'] : pool_for_current_topic();
     if ($pool) json_response(content_for_display($pool[0], array_slice($pool, 1, CONTENT_PRELOAD_COUNT)));
 
     $parser_status = $debug_mode ? 'cooldown' : start_content_parser_if_needed();
@@ -21,8 +21,131 @@ function handle_parser_status($debug_mode) {
     json_response(['running' => content_parser_is_running(), 'activity' => content_parser_activity()]);
 }
 
+/** Идентификатор вкладки из запроса или ошибка 400. */
+function request_tab_id($input) {
+    $tab = $input['tab'] ?? '';
+    if (!is_valid_tab_id($tab)) json_error('Некорректный идентификатор вкладки.');
+    return $tab;
+}
+
+/** Вкладка открыта: прежние процессы останавливаются, поиск начинается заново, привязанный к этой вкладке. */
+function handle_tab_open($input, $debug_mode) {
+    $tab = request_tab_id($input);
+    if ($debug_mode) json_response(['status' => 'success', 'debug' => true]);
+    json_response(['status' => 'success', 'parser' => tab_session_open($tab)]);
+}
+
+/** Сигнал живой вкладки. owner = false — приложение открыто в другой, более новой вкладке. */
+function handle_tab_heartbeat($input, $debug_mode) {
+    $tab = request_tab_id($input);
+    if ($debug_mode) json_response(['owner' => true, 'debug' => true]);
+    json_response(tab_session_heartbeat($tab));
+}
+
+/** Вкладка закрыта: если она вела сессию, процессы останавливаются. */
+function handle_tab_close($input, $debug_mode) {
+    $tab = request_tab_id($input);
+    if ($debug_mode) json_response(['status' => 'success', 'debug' => true]);
+    json_response(['status' => 'success', 'stopped' => tab_session_close($tab)]);
+}
+
+/** Есть ли видео в записи: в главном файле или в галерее (см. post_item_video_promote в parser/collector.php). */
+function post_item_has_video(array $item) {
+    if (trim((string)($item['video'] ?? '')) !== '') return true;
+    foreach (is_array($item['gallery'] ?? null) ? $item['gallery'] : [] as $file) {
+        if (trim((string)($file['video'] ?? '')) !== '') return true;
+    }
+    return false;
+}
+
+/**
+ * Пул без записей другой темы и без не подходящих под фильтры: устаревших («Только новый контент») и без видео («Только с видео»). Такие записи остаются в пуле,
+ * если тему сменили, пока парсер дописывал запись, — они убираются здесь, чтобы пользователь не видел старую тему.
+ */
+function pool_for_current_topic() {
+    $topic = current_topic();
+    $filters = content_filters();
+    $fresh_days = $filters['fresh_only'] ? CONTENT_FRESH_MAX_AGE_DAYS : null;
+    $keep = function ($item) use ($topic, $fresh_days, $filters) {
+        if (($item['topic'] ?? '') !== '' && !topic_same((string)$item['topic'], $topic) && !topic_same((string)$item['topic'], search_topic_key())) return false;
+        if ($filters['video_only'] && !post_item_has_video($item)) return false;
+        return $fresh_days === null || !is_post_outdated($item['posted_at'] ?? 0, null, $fresh_days);
+    };
+    $pool = load_data(pool_file(), []);
+    if (count(array_filter($pool, $keep)) === count($pool)) return $pool;
+    return update_data(pool_file(), [], fn($pool) => array_values(array_filter(is_array($pool) ? $pool : [], $keep)));
+}
+
 function handle_get_settings($debug_mode) {
-    json_response(['topic' => $debug_mode ? (debug_state()['topic'] ?? DEFAULT_TOPIC) : current_topic()]);
+    $topic = $debug_mode ? (debug_state()['topic'] ?? DEFAULT_TOPIC) : current_topic();
+    $entry = $debug_mode ? topic_lookup($topic) : topic_ensure($topic);
+    json_response(['topic' => $topic, 'topic2' => $debug_mode ? '' : current_topic2(), 'topic_info' => $entry ? topic_public($entry) : null,
+        'filters' => $debug_mode ? default_settings() : content_filters()]);
+}
+
+/** POST: вторая тема (пусто — убрать). Контент ищется по обеим: запись должна подходить под обе. Пул пересобирается. */
+function handle_save_second_topic($input, $debug_mode) {
+    $typed = normalize_topic($input['topic2'] ?? '');
+    if ($debug_mode) json_response(['status' => 'success', 'topic2' => $typed, 'debug' => true]);
+    if ($typed !== '' && topic_same($typed, current_topic())) json_error('Вторая тема совпадает с первой.');
+    $topic2 = '';
+    if ($typed !== '') {
+        $resolved = topic_resolve($typed);
+        $topic2 = $resolved['topic']['title'];
+        if (topic_same($topic2, current_topic())) json_error('Вторая тема совпадает с первой.');
+    }
+    if (topic_norm($topic2) === topic_norm(current_topic2())) json_response(['status' => 'success', 'topic2' => $topic2, 'parser' => 'unchanged']);
+    save_second_topic($topic2);
+    update_data(pool_file(), [], function () { return []; });
+    $parser = start_content_parser_if_needed(true);
+    json_response(['status' => 'success', 'topic2' => $topic2, 'parser' => $parser]);
+}
+
+/** POST: фильтры подбора («Только новый контент», «Только актуальные источники»). Пул пересобирается под них. */
+function handle_save_filters($input, $debug_mode) {
+    if ($debug_mode) json_response(['status' => 'success', 'filters' => array_intersect_key($input, default_settings()), 'debug' => true]);
+    $before = content_filters();
+    $filters = save_content_filters(array_intersect_key($input, ['fresh_only' => 1, 'active_sources_only' => 1, 'video_only' => 1]));
+    $parser = 'unchanged';
+    if ($filters !== $before) {
+        pool_for_current_topic();   // включили «Только новый» — старые записи уходят сразу
+        // Ослабили фильтр — в пул может прийти больше; запущенный парсер сам заметит смену фильтров и начнёт заново
+        $parser = start_content_parser_if_needed(true);
+    }
+    json_response(['status' => 'success', 'filters' => $filters, 'parser' => $parser]);
+}
+
+/** POST: пересоставить профиль темы (критерии, вопрос, план поиска). Сборщик напишет его заново при следующем запуске. */
+function handle_topic_reprofile($input, $debug_mode) {
+    if ($debug_mode) json_error('В демо-режиме профили не меняются.');
+    $id = (string)($input['id'] ?? '');
+    $entry = topic_registry()[$id] ?? null;
+    if ($entry === null) json_error('Такой темы нет.');
+    $entry['profile'] = [];
+    topic_save($entry);
+    json_response(['status' => 'success']);
+}
+
+/** POST: пользователь поправил общую тему для темы (parent — id, название новой общей темы или '' — тема сама общая). */
+function handle_topic_parent($input, $debug_mode) {
+    if ($debug_mode) json_error('В демо-режиме темы не меняются.');
+    try {
+        $entry = topic_set_parent((string)($input['id'] ?? ''), (string)($input['parent'] ?? ''));
+    } catch (InvalidArgumentException $error) {
+        json_error($error->getMessage());
+    }
+    topic_related_norms(null, true);
+    json_response(['status' => 'success', 'topic_info' => topic_public($entry)]);
+}
+
+/** GET: все темы реестра для выбора (широкие, внутри — их узкие) и текущая тема пользователя. */
+function handle_topics($debug_mode) {
+    $topic = $debug_mode ? (debug_state()['topic'] ?? DEFAULT_TOPIC) : current_topic();
+    $db = load_source_db();
+    $current = topic_lookup($topic);
+    $topics = array_map(fn($entry) => topic_public($entry, $db), array_values(topic_registry()));
+    usort($topics, fn($a, $b) => [$a['parent']['title'] ?? $a['title'], $a['parent'] ? 1 : 0, $a['title']] <=> [$b['parent']['title'] ?? $b['title'], $b['parent'] ? 1 : 0, $b['title']]);
+    json_response(['current' => $current['id'] ?? null, 'topics' => $topics]);
 }
 
 /**
@@ -30,8 +153,15 @@ function handle_get_settings($debug_mode) {
  * по новой теме. История оценок сохраняется: она описывает вкус пользователя, а не тему.
  */
 function handle_save_topic($input, $debug_mode) {
-    $topic = normalize_topic($input['topic'] ?? '');
-    if ($topic === '') json_error('Тема поиска не может быть пустой.');
+    $typed = normalize_topic($input['topic'] ?? '');
+    if ($typed === '') json_error('Тема поиска не может быть пустой.');
+    // Ввод → тема реестра: существующая (по названию, синониму или решению модели) или новая с аккуратным названием и местом
+    // среди тем (lib/topics.php). force_new — пользователь нажал «Это другая тема».
+    $previous = $debug_mode ? '' : current_topic();
+    // Старый парсер останавливается сразу: он занимает модель (определение темы ждало бы его) и собирает по старой теме
+    $stopped = !$debug_mode && !topic_same($typed, $previous) && stop_content_parser();
+    $resolved = $debug_mode ? null : topic_resolve($typed, !empty($input['force_new']));
+    $topic = $resolved ? $resolved['topic']['title'] : $typed;
 
     if ($debug_mode) {
         $state = &debug_state();
@@ -39,15 +169,21 @@ function handle_save_topic($input, $debug_mode) {
         json_response(['status' => 'success', 'topic' => $topic, 'debug' => true]);
     }
 
-    $previous = current_topic();
     save_topic($topic);
     $parser = 'unchanged';
-    if ($topic !== $previous) {
-        update_data(POOL_FILE, [], function () { return []; });
-        media_cache_cleanup([], true);
+    // У новой темы мало своих источников — заказываем автоподбор: сборщик начнёт с поиска источников
+    $lacks_sources = topic_lacks_sources(load_source_db(), $topic);
+    if ($lacks_sources) request_source_discovery();
+    if (!topic_same($topic, $previous)) {
+        update_data(pool_file(), [], function () { return []; });
+        media_cache_cleanup(all_users_pool_items());
         $parser = start_content_parser_if_needed(true);
+    } elseif ($stopped) {
+        $parser = start_content_parser_if_needed(true);   // ввод оказался той же темой — продолжаем сбор
     }
-    json_response(['status' => 'success', 'topic' => $topic, 'parser' => $parser]);
+    json_response(['status' => 'success', 'topic' => $topic, 'parser' => $parser, 'typed' => $typed,
+        'matched' => $resolved['matched'], 'created' => $resolved['created'], 'ai' => $resolved['ai'], 'discovery' => $lacks_sources,
+        'topic_info' => topic_public($resolved['topic'])]);
 }
 
 function handle_analyze_image($input, $debug_mode) {
@@ -84,16 +220,17 @@ function handle_vote($input, $debug_mode) {
 
     // Пул блокируется на всё время голосования, история — внутри него (тот же порядок, что у парсера).
     $pool_before = [];
-    $pool = update_data(POOL_FILE, [], function ($pool) use ($image, $vote, $complaint_reason, &$pool_before) {
+    $pool = update_data(pool_file(), [], function ($pool) use ($image, $vote, $complaint_reason, &$pool_before) {
         $pool_before = $pool;
         return apply_vote($pool, $image, $vote, $complaint_reason, function ($record, $collection) {
-            update_data(HISTORY_FILE, empty_history(), function ($history) use ($record, $collection) {
+            update_data(history_file(), empty_history(), function ($history) use ($record, $collection) {
                 $history[$collection][] = $record;
                 return $history;
             });
         });
     });
-    media_cache_release_removed($pool_before, $pool); // картинка оценённой записи больше не нужна
+    // картинка оценённой записи больше не нужна; лайк и «не знаю» остаются в «Предложке» вместе с файлами
+    if (!in_array(CONTENT_VOTE_COLLECTIONS[$vote] ?? '', PROPOSAL_COLLECTIONS, true)) media_cache_release_removed($pool_before, $pool);
     json_response(['status' => 'success']);
 }
 

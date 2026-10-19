@@ -16,8 +16,13 @@
     --accent-text: #0b0b0c;
     --danger: #f87171;
     --rainbow: #ff4d6d, #ffb347, #f9f871, #4ade80, #38bdf8, #a78bfa, #ff4d6d;
-    --radius: 10px;
+    --radius: 8px;
+    --modal-dim: rgba(0, 0, 0, 0.35);   /* затемнение фона у всех модальных окон */
+    --ring-width: 1px;           /* переливающаяся рамка под курсором: ложится точно на рамку кнопки (1px) */
+    --ring-active-width: 2.5px;  /* рамка активной вкладки — толще, она видна постоянно */
     --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+    --font-ui: 'Golos Text', system-ui, -apple-system, sans-serif;        /* весь интерфейс (fonts.css) */
+    --font-display: 'Montserrat Alternates', var(--font-ui);              /* логотип и название */
 }
 
 /* Атрибут hidden всегда прячет элемент, даже если класс задаёт ему display. */
@@ -26,7 +31,7 @@
 body {
     background: var(--bg);
     color: var(--text);
-    font-family: system-ui, -apple-system, sans-serif;
+    font-family: var(--font-ui);
     margin: 0;
     padding: 20px;
     display: flex;
@@ -41,6 +46,73 @@ button { cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* ---- Единый радужный перелив ----
+   Во всём приложении один эффект: радужный градиент conic-gradient(from var(--tab-angle), var(--rainbow)), который
+   крутится анимацией tab-rainbow-spin за 3 с. Им переливаются:
+   - рамка активной вкладки (ниже, «Вкладки»);
+   - рамка кнопки под курсором и кнопки с открытым меню (aria-expanded), карточки-цели при перетаскивании;
+   - текст ссылок под курсором (не рамка, а сами буквы).
+   Специфичность нулевая (:where): собственные стили элементов сильнее. */
+:where(button, [role="button"], [role="tab"], label.file-picker, label.check-chip):where(:hover, [aria-expanded="true"]):where(:not(:disabled):not([aria-disabled="true"]):not(.tab-btn.active)),
+:where(.pe-card.is-over) {
+    position: relative;
+}
+:where(button, [role="button"], [role="tab"], label.file-picker, label.check-chip):where(:hover, [aria-expanded="true"]):where(:not(:disabled):not([aria-disabled="true"]):not(.tab-btn.active))::after,
+:where(.pe-card.is-over)::after {
+    content: '';
+    position: absolute;
+    inset: calc(var(--ring-width) * -1);   /* кольцо перекрывает собственную рамку кнопки, а не рисуется рядом с ней */
+    padding: var(--ring-width);
+    border-radius: inherit;
+    background: conic-gradient(from var(--tab-angle), var(--rainbow));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    pointer-events: none;
+    animation: tab-rainbow-spin 3s linear infinite;
+}
+/* Тот же перелив в буквах: ссылки под курсором и «живой» текст (например, «ИИ думает…»). */
+/* color с !important: у ссылок свой цвет в классах, а под курсором он всегда уступает переливу. */
+:where(a[href]:hover, .rainbow-text) {
+    color: transparent !important;
+    background: conic-gradient(from var(--tab-angle), var(--rainbow));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-box-decoration-break: clone;   /* ссылка в несколько строк переливается в каждой строке */
+    box-decoration-break: clone;
+    animation: tab-rainbow-spin 3s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+    :where(button, [role="button"], [role="tab"], label.file-picker, label.check-chip)::after,
+    :where(a[href], .rainbow-text) { animation: none !important; }
+}
+
+/* ---- Верхняя строка: логотип и вкладки ----
+   На телефоне логотип над вкладками, на широком экране — в одной строке: вкладки по центру, логотип по центру
+   свободного места слева от них. */
+.app-top {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    width: 100%;
+    margin-bottom: 25px;
+}
+.app-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+/* Знак без плитки (logo-mark.svg): карточки занимают всю высоту, которую раньше занимала плитка */
+.app-brand-logo { display: block; width: auto; height: 44px; }
+.app-brand-name {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+}
+
 /* ---- Вкладки ---- */
 .tabs {
     display: flex;
@@ -48,11 +120,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     justify-content: center;
     gap: 10px;
     max-width: 100%;
-    margin-bottom: 25px;
 }
 .tab-btn {
     padding: 11px 22px;
-    border: 2px solid var(--line);
+    border: 1px solid var(--line);
     border-radius: var(--radius);
     background: var(--surface);
     color: var(--muted);
@@ -68,20 +139,32 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     initial-value: 0deg;
     inherits: false;
 }
+/* Кольцо толщиной --ring-active-width: закрывает рамку вкладки (1px) и выступает наружу, размер вкладки не меняется. */
 .tab-btn.active {
+    position: relative;
     border-color: transparent;
-    background:
-        linear-gradient(var(--surface-2), var(--surface-2)) padding-box,
-        conic-gradient(from var(--tab-angle), var(--rainbow)) border-box;
+    background: var(--surface-2);
     color: var(--text);
     box-shadow: 0 0 18px -6px rgba(255, 255, 255, 0.35);
+}
+.tab-btn.active::after {
+    content: '';
+    position: absolute;
+    inset: calc(1px - var(--ring-active-width));
+    padding: var(--ring-active-width);
+    border-radius: calc(var(--radius) + var(--ring-active-width) - 1px);
+    background: conic-gradient(from var(--tab-angle), var(--rainbow));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    pointer-events: none;
     animation: tab-rainbow-spin 3s linear infinite;
 }
 @keyframes tab-rainbow-spin {
     to { --tab-angle: 360deg; }
 }
 @media (prefers-reduced-motion: reduce) {
-    .tab-btn.active { animation: none; }
+    .tab-btn.active::after { animation: none; }
 }
 
 /* ---- Панели вкладок ---- */
@@ -99,6 +182,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ---- Журнал приложения ---- */
 .activity-console {
+    display: flex;
+    flex-direction: column;
     width: min(100%, 900px);
     height: 320px;
     margin: 0 0 20px;
@@ -130,7 +215,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     flex: 0 0 auto;
     padding: 4px 6px;
     border: 1px solid var(--line-strong);
-    border-radius: 4px;
+    border-radius: 3px;
     background: var(--surface-2);
     font-size: 10px;
 }
@@ -150,7 +235,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     50% { opacity: 0.25; }
 }
 .activity-console-output {
-    height: calc(100% - 35px);
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 8px 12px;
     box-sizing: border-box;
@@ -162,13 +248,65 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     overflow-wrap: anywhere;
 }
 .activity-console-line::before { content: '> '; color: var(--faint); }
+.console-link {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 2px;
+}
+.console-link:hover { text-decoration-color: var(--muted); }
+
+/* Отладочная панель модели внизу журнала: свёрнута до строки-сводки. */
+.model-panel {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+}
+.model-panel summary {
+    display: flex;
+    gap: 8px;
+    padding: 7px 12px;
+    color: var(--muted);
+    cursor: pointer;
+    list-style: none;
+}
+.model-panel summary::-webkit-details-marker { display: none; }
+.model-panel summary::before { content: '▸'; color: var(--faint); }
+.model-panel[open] summary::before { content: '▾'; }
+.model-panel-title { color: var(--text); font-weight: 600; }
+#model-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-panel-body { display: grid; gap: 8px; padding: 0 12px 10px; }
+.model-panel-line { color: var(--muted); }
+.model-panel-note:empty { display: none; }
+.model-loaded { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.model-loaded:empty::before { content: 'Загруженных моделей нет.'; color: var(--faint); }
+.model-loaded li {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+}
+.model-loaded-name { color: var(--text); overflow-wrap: anywhere; }
+.model-loaded-details { grid-column: 1; color: var(--faint); }
+.model-loaded button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.model-panel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.model-panel button {
+    padding: 4px 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 3px;
+    background: var(--surface-2);
+    font: inherit;
+    font-size: 11px;
+}
 
 /* Обмен с моделью: запрос, ответ и размышления — «пузыри», различаются рамкой, а не цветом. */
 .activity-console-line.ai-message {
     margin: 6px 0;
     padding: 6px 8px;
     border-left: 2px solid var(--line-strong);
-    border-radius: 4px;
+    border-radius: 3px;
     background: var(--surface);
     cursor: pointer;
 }
@@ -209,9 +347,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 /* ---- Раскладка: мобильная и десктопная ---- */
 /* Mobile: .app-main прозрачен для раскладки, журнал стоит между вкладками и содержимым. */
 .app-main { display: contents; }
-.tabs { order: 0; }
+.app-top { order: 0; }
 .activity-console { order: 1; }
-.app-main > :not(.tabs) { order: 2; }
+.app-main > :not(.app-top) { order: 2; }
 /* Desktop: журнал в отдельной липкой колонке, не перекрывает вкладки и карточку. */
 @media (min-width: 900px) {
     body {
@@ -228,6 +366,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
         align-items: center;
         min-width: 0;
     }
+    /* Три колонки: логотип | вкладки | пустая колонка той же ширины — так вкладки стоят ровно по центру */
+    .app-top {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+        column-gap: 24px;
+    }
+    .app-brand { justify-self: center; }   /* по центру левой колонки, между краем области и вкладками */
     .activity-console {
         grid-column: 1;
         grid-row: 1;

@@ -15,9 +15,9 @@ function vk_oauth_config() {
 }
 
 function vk_token_file() {
-    $configured_path = trim((string)getenv('CONTENT_TINDER_VK_TOKEN_FILE'));
+    $configured_path = trim((string)getenv('POSTMAKER_VK_TOKEN_FILE'));
     if ($configured_path !== '') return $configured_path;
-    return rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'content-tinder-vk-' . substr(hash('sha256', __DIR__), 0, 16) . '.json';
+    return rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'postmaker-vk-' . substr(hash('sha256', __DIR__), 0, 16) . '.json';
 }
 
 function load_vk_tokens() {
@@ -152,6 +152,7 @@ function build_vk_preview_posts($source, $count = 4) {
             'source' => $source['name'] ?? source_display_name(PLATFORM_VK, $domain),
             'post_id' => $post_id,
             'posted_at' => (int)($post['date'] ?? 0),
+            'views' => isset($post['views']['count']) ? (int)$post['views']['count'] : null,
             'url' => $owner_id !== '' && $post_id !== '' ? 'https://vk.com/wall' . $owner_id . '_' . $post_id : 'https://vk.com/' . rawurlencode($domain)
         ];
         if (count($posts) >= $count) break;

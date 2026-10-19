@@ -7,7 +7,7 @@ function fetch_telegram_channel_page($channel) {
         CURLOPT_TIMEOUT => 12,
         CURLOPT_MAXREDIRS => 2,
         CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; ContentTinder/1.0)'
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; Postmaker/1.0)'
     ]);
 }
 
@@ -23,6 +23,27 @@ function telegram_post_images($content) {
     preg_match_all('~href="(https://[^"]*(?:cdn-telegram\.org|telegram-cdn\.org)[^"]+\.(?:jpe?g|png|webp)(?:\?[^"]*)?)"~i', $content, $matches);
     foreach (($matches[1] ?? []) as $url) $urls[] = telegram_html_attribute($url);
     return array_values(array_unique($urls));
+}
+
+/**
+ * Все медиафайлы сообщения по порядку (альбом — это одно сообщение с несколькими плитками): [['image' => картинка или постер, 'video' => URL или '']].
+ * Плитка видео без файла (слишком большое для веб-версии) попадает с video = '' и пустым image пропускается.
+ */
+function telegram_post_media($content, $max = 10) {
+    $parts = preg_split('~(?=<a class="tgme_widget_message_(?:photo_wrap|video_player|roundvideo_player)\b)~', $content);
+    array_shift($parts);   // текст до первой плитки
+    $media = [];
+    foreach ($parts as $part) {
+        $end = strpos($part, '</a>');
+        if ($end !== false) $part = substr($part, 0, $end);
+        $video = preg_match('~<video[^>]*?\ssrc="([^"]+)"~i', $part, $match) ? telegram_html_attribute($match[1]) : '';
+        $image = preg_match('~<video[^>]*?\sposter="([^"]+)"~i', $part, $match) ? telegram_html_attribute($match[1]) : '';
+        if ($image === '' && preg_match('~background-image:\s*url\([\'"]?(https://[^\'")\s]+)~i', $part, $match)) $image = telegram_html_attribute($match[1]);
+        if ($image === '') continue;
+        $media[] = ['image' => $image, 'video' => $video];
+        if (count($media) >= $max) break;
+    }
+    return $media;
 }
 
 /**
@@ -55,6 +76,7 @@ function telegram_posts_from_html($html, $source, $count) {
     $channel = ltrim((string)($source['id'] ?? ''), '@');
 
     preg_match_all('/data-post="([^"]+)"(.*?)(?=data-post="[^"]+"|$)/s', $html, $blocks, PREG_SET_ORDER);
+    $page = telegram_page_engagement($html);   // просмотры и реакции всех постов страницы: и сами посты, и база сравнения
     $posts = [];
     foreach (array_reverse($blocks) as $block) {
         if (count($posts) >= $count) break;
@@ -67,25 +89,36 @@ function telegram_posts_from_html($html, $source, $count) {
             $text = clean_html_text($text_match[1]);
         }
 
+        $media = telegram_post_media($content);
         $images = telegram_post_images($content);
         $video = preg_match('~<video[^>]*?\ssrc="([^"]+)"~i', $content, $video_match) ? telegram_html_attribute($video_match[1]) : '';
+        // Проигрыватель есть, а файла нет (класс not_supported): видео слишком большое, и Telegram не отдаёт его в веб-версии —
+        // остаётся только обложка. Такой пост помечается: на сайте он открывается ссылкой на Telegram, в пул парсер его не берёт.
+        $video_unavailable = $video === '' && preg_match('~tgme_widget_message_(?:round)?video_player~', $content) === 1;
         if ($video !== '') {
             $poster = preg_match('~<video[^>]*?\sposter="([^"]+)"~i', $content, $poster_match) ? telegram_html_attribute($poster_match[1]) : '';
             if ($poster === '') $poster = $images[0] ?? '';
             if ($poster === '') continue; // без постера нечего показать и оценить
             $images = [$poster];
         }
+        if ($media) {   // первый файл — главный (оценивается), остальные идут в галерею поста
+            $images = [$media[0]['image']];
+            $video = $media[0]['video'];
+        }
         if (!$images) continue;
 
         $posts[] = [
             'image' => $images[0],
             'images' => array_slice($images, 0, 4),
+            'gallery' => count($media) > 1 ? $media : [],
             'video' => $video,
             'text' => $text ?: EMPTY_POST_TEXT,
             'source' => $source['name'] ?? source_display_name(PLATFORM_TELEGRAM, $channel),
             'post_id' => $post_id,
             'posted_at' => telegram_post_time($content),
-            'url' => 'https://t.me/' . rawurlencode($channel) . '/' . rawurlencode($post_id)
+            'url' => 'https://t.me/' . rawurlencode($channel) . '/' . rawurlencode($post_id),
+            'video_unavailable' => $video_unavailable,
+            'engagement' => telegram_engagement_snapshot($page, $post_id, telegram_post_time($content))
         ];
     }
     return $posts;
@@ -108,6 +141,19 @@ function telegram_parse_counter($text) {
     return (int)round($value * $multiplier);
 }
 
+/** Число подписчиков со страницы канала t.me/s/… (0, если не указано). */
+function telegram_subscribers_from_html($html) {
+    if (preg_match('~<span class="counter_value">([^<]+)</span>\s*<span class="counter_type">subscribers?</span>~i', (string)$html, $m)) {
+        return telegram_parse_counter($m[1]);
+    }
+    return 0;
+}
+
+/** Просмотры постов страницы канала, самые новые первыми (для доли просмотров, lib/source_quality.php). */
+function telegram_page_views($html) {
+    return array_reverse(array_values(array_map(fn($post) => $post['views'], telegram_page_engagement($html))));
+}
+
 /**
  * Сведения о публичном канале по странице t.me/s/<канал>: название, описание, подписчики и посты.
  * Возвращает null, если канала нет, он закрыт или это не канал (у таких страниц нет ленты постов).
@@ -119,10 +165,7 @@ function telegram_channel_info($channel, $post_count = 6) {
 
     $title = preg_match('~class="tgme_channel_info_header_title"[^>]*>(.*?)</div>~si', $html, $m) ? clean_html_text($m[1]) : '';
     $description = preg_match('~class="tgme_channel_info_description"[^>]*>(.*?)</div>~si', $html, $m) ? clean_html_text($m[1]) : '';
-    $subscribers = 0;
-    if (preg_match('~<span class="counter_value">([^<]+)</span>\s*<span class="counter_type">subscribers?</span>~i', $html, $m)) {
-        $subscribers = telegram_parse_counter($m[1]);
-    }
+    $subscribers = telegram_subscribers_from_html($html);
     return [
         'id' => $channel,
         'title' => $title ?: $channel,
@@ -130,6 +173,7 @@ function telegram_channel_info($channel, $post_count = 6) {
         'subscribers' => $subscribers,
         'posts' => telegram_posts_from_html($html, ['id' => $channel, 'name' => source_display_name(PLATFORM_TELEGRAM, $title ?: $channel)], $post_count),
         'post_times' => telegram_post_times($html),
+        'post_views' => telegram_page_views($html),
         'linked' => telegram_linked_channels($html, $channel)
     ];
 }

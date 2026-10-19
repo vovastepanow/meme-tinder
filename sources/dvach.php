@@ -61,20 +61,47 @@ function dvach_post_text($post) {
     return trim(preg_replace('/\s+/u', ' ', $text) ?? '');
 }
 
+/**
+ * Превью треда для карточки источника: подборка медиа со ВСЕГО треда, а не только из шапки. Все файлы треда (картинки и видео
+ * с обложкой) собираются по порядку постов, и $count штук берутся через равные промежутки — от начала до конца обсуждения.
+ */
 function build_dvach_preview_posts($source, $count = 4) {
     $board = $source['board'] ?? '';
-    $posts = [];
-    foreach (dvach_thread_posts(fetch_2ch_json($board, $source['thread_id'] ?? '')) as $post) {
-        if (count($posts) >= $count) break;
-        $images = array_slice(array_column(dvach_post_media($board, $post), 'image'), 0, 4);
-        if (!$images) continue;
-        $posts[] = [
-            'image' => $images[0],
-            'images' => $images,
+    $thread_id = (string)($source['thread_id'] ?? '');
+    $items = [];
+    foreach (dvach_thread_posts(fetch_2ch_json($board, $thread_id)) as $post) {
+        foreach (dvach_post_media($board, $post, true) as $media) $items[] = [$post, $media];
+    }
+    $total = count($items);
+    if ($total === 0) return [];
+    $picked = [];
+    if ($total <= $count) {
+        $picked = $items;
+    } else {
+        for ($i = 0; $i < $count; $i++) $picked[] = $items[(int)floor(($i + 0.5) * $total / $count)];
+    }
+    return array_map(function ($pair) use ($source, $board, $thread_id) {
+        [$post, $media] = $pair;
+        $post_id = (string)($post['num'] ?? '');
+        return [
+            'image' => $media['image'],
+            'images' => [$media['image']],
+            'video' => $media['video'],
             'text' => dvach_post_text($post) ?: EMPTY_POST_TEXT,
             'source' => $source['name'] ?? '',
-            'post_id' => $post['num'] ?? ''
+            'post_id' => $post_id,
+            'posted_at' => (int)($post['timestamp'] ?? 0),
+            'url' => dvach_post_url($board, $thread_id, $post_id)
         ];
-    }
-    return $posts;
+    }, $picked);
+}
+
+/**
+ * Короткое название треда для журнала и карточек: тема треда (subject) без разметки, не длиннее DVACH_THREAD_TITLE_MAX.
+ * У треда без темы — номер треда, как раньше.
+ */
+function dvach_thread_title($thread_subject, $thread_id) {
+    $title = str_replace(['[', ']'], '', clean_html_text($thread_subject));   // в журнале название — текст ссылки «[…](адрес)»
+    if ($title === '') return '#' . $thread_id;
+    return mb_strlen($title) > DVACH_THREAD_TITLE_MAX ? rtrim(mb_substr($title, 0, DVACH_THREAD_TITLE_MAX - 1)) . '…' : $title;
 }

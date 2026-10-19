@@ -1,7 +1,7 @@
 <?php
 // Демо-режим ?debug=1: состояние живёт в PHP-сессии, Ollama не вызывается, файлы проекта не меняются.
 
-const DEBUG_SESSION_KEY = 'content_tinder_debug';
+const DEBUG_SESSION_KEY = 'postmaker_debug';
 
 /** Состояние демо-режима в сессии (по ссылке). Создаётся при первом обращении. */
 function &debug_state() {

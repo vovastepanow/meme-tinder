@@ -1,5 +1,6 @@
 # Секреты сервера (VK и прочее): никогда не коммитить.
 config.local.php
+secret.key.php
 
 # Пользовательские данные: пул контента, история оценок, источники, настройки.
 # Приложение создаёт и перезаписывает эти файлы, поэтому git их не отслеживает.
@@ -7,12 +8,15 @@ content_pool.json
 content_history.json
 sources_db.json
 settings.json
+users/
+analysis_cache.json
 
 # Кэш картинок и видео отобранного контента.
 media_cache/
 
 # Состояние фонового парсера, блокировки, логи и временные файлы записи.
 .content-tinder-*
+.postmaker-*
 .content-data-*
 *.lock
 *.log
@@ -22,3 +26,43 @@ memes_pool.json
 meme_history.json
 .meme-tinder-*
 .meme-data-*
+screened_cache.json
+telegram_limits.json
+telegram_app.json
+
+# Кэш байт-кода Python (появляется при запуске tools/tg_user.py и библиотеки Telethon).
+__pycache__/
+*.pyc
+
+# Персональные данные пользователя и сессии (никогда не коммитить: оценки, пул, история, каналы, сессии Telegram, журналы).
+users/
+*.session
+*.session.lock
+connections.json
+outbox.json
+published.json
+last-seen
+proposals-checked
+threads-checked
+screened_cache.json
+analysis_cache.json
+content_pool.json
+content_history.json
+memes_pool.json
+meme_history.json
+sources_db.json
+settings.json
+telegram_app.json
+telegram_limits.json
+secret.key.php
+config.local.php
+media_cache/
+*.backup
+*.bak
+.meme-tinder-*
+.meme-data-*
+.content-tinder-*
+.content-data-*
+.postmaker-*
+*.log
+*.lock

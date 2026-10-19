@@ -5,12 +5,12 @@ function database_editor_definitions() {
     return [
         'content_pool' => [
             'label' => 'Пул контента',
-            'file' => POOL_FILE,
+            'file' => pool_file(),
             'collections' => ['items' => 'Записи']
         ],
         'content_history' => [
             'label' => 'История оценок',
-            'file' => HISTORY_FILE,
+            'file' => history_file(),
             'collections' => [
                 'liked' => 'Лайки',
                 'disliked' => 'Дизлайки',
@@ -79,8 +79,8 @@ function database_editor_validate_record($database, $collection, $record) {
     }
 
     if (in_array($collection, HISTORY_COLLECTIONS, true)) {
-        if (!is_array($record) || array_is_list($record) || !is_string($record['text'] ?? null) || !is_numeric($record['rating_assigned'] ?? null)) {
-            throw new InvalidArgumentException('Для записи истории нужны объект, строка text и число rating_assigned.');
+        if (!is_array($record) || array_is_list($record) || !is_string($record['text'] ?? null) || !(is_numeric($record['rating_assigned'] ?? null) || (array_key_exists('rating_assigned', $record) && $record['rating_assigned'] === null))) {
+            throw new InvalidArgumentException('Для записи истории нужны объект, строка text и число rating_assigned (или null).');
         }
         return;
     }

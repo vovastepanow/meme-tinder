@@ -18,7 +18,11 @@ function validate_image_bytes($image_data) {
     }
 }
 
-function fetch_public_image($url) {
+/**
+ * Проверяет адрес для скачивания чужого файла: только http(s) на стандартных портах и только публичные адреса (внутренняя сеть закрыта).
+ * Возвращает значение CURLOPT_RESOLVE, закрепляющее проверенный адрес (или пустой массив для IP-адреса в ссылке).
+ */
+function public_url_resolve($url) {
     $parts = parse_url($url);
     if (!$parts || !in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true) || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
         throw new RuntimeException('Укажите прямую публичную ссылку на изображение.');
@@ -46,6 +50,12 @@ function fetch_public_image($url) {
         $resolve[] = $host . ':' . $port . ':' . $addresses[0];
     }
 
+    return $resolve;
+}
+
+function fetch_public_image($url) {
+    $resolve = public_url_resolve($url);
+
     $image_data = '';
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -57,7 +67,7 @@ function fetch_public_image($url) {
         CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
-        CURLOPT_USERAGENT => 'ContentTinder/1.0',
+        CURLOPT_USERAGENT => 'Postmaker/1.0',
         CURLOPT_WRITEFUNCTION => function($curl, $chunk) use (&$image_data) {
             if (strlen($image_data) + strlen($chunk) > MAX_IMAGE_BYTES) return 0;
             $image_data .= $chunk;
