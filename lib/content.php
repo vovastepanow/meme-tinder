@@ -147,8 +147,8 @@ function media_cache_release_removed(array $before, array $after) {
 
 /** Очистка данных пользователя: пустые пул и история; каталог общий и остаётся. */
 function reset_project_data() {
-    update_data(pool_file(), [], fn() => []);
-    update_data(history_file(), empty_history(), fn() => empty_history());
+    pool_update(fn() => []);
+    history_update(fn() => empty_history());
     return media_cache_cleanup(all_users_pool_items());
 }
 

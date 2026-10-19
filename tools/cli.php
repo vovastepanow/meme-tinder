@@ -68,6 +68,24 @@ case 'rescore-sources':
     rescore_sources($flag('catalog'), $flag('apply'));
     break;
 
+case 'migrate-json':
+    echo "Миграция JSON → SQLite\n";
+    if (is_file(SOURCES_FILE)) {
+        $sources = load_data(SOURCES_FILE, []);
+        update_source_db(fn() => $sources);
+        echo "  ✓ sources_db.json\n";
+    }
+    foreach (user_ids() as $uid) {
+        app_user_bind($uid);
+        if (is_file(settings_file())) db_save_settings(load_data(settings_file(), []), $uid);
+        if (is_file(pool_file())) pool_update(fn() => load_data(pool_file(), []), $uid);
+        if (is_file(history_file())) history_update(fn() => load_data(history_file(), []), $uid);
+        if (is_file(connections_file())) connections_update(fn() => load_data(connections_file(), []), $uid);
+        echo "  ✓ users/" . substr($uid, 0, 8) . "\n";
+    }
+    echo "Готово.\n";
+    break;
+
 default:
     echo preg_replace('/^\/\/ ?/m', '', implode("\n", array_slice(file(__FILE__, FILE_IGNORE_NEW_LINES), 1, 7))) . "\n";
 }
