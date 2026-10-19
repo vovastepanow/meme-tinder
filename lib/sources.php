@@ -543,11 +543,44 @@ function normalize_source_db($db) {
     return $out;
 }
 
-function load_source_db() { return normalize_source_db(load_data(SOURCES_FILE, [])); }
+function load_source_db() {
+    $catalog = catalog_load();
+    $db = [
+        '2ch_boards' => $catalog['sources']['2ch_boards'] ?? [],
+        'vk_publics' => $catalog['sources']['vk_publics'] ?? [],
+        'telegram_channels' => $catalog['sources']['telegram_channels'] ?? [],
+        'source_votes' => $catalog['votes'] ?? [],
+        'source_suggestions' => $catalog['suggestions'] ?? [],
+        'dvach_topic_boards' => $catalog['kv']['dvach_topic_boards'] ?? [],
+        'discovery' => $catalog['kv']['discovery'] ?? [],
+        'topics' => $catalog['topics'] ?? [],
+    ];
+    return normalize_source_db($db);
+}
 
-/** Изменить каталог под блокировкой: $mutator получает нормализованный каталог. */
+/** Изменить каталог: $mutator получает нормализованный каталог. */
 function update_source_db(callable $mutator) {
-    return update_data(SOURCES_FILE, [], fn($db) => $mutator(normalize_source_db($db)));
+    $current = load_source_db();
+    $updated = $mutator($current);
+    if ($updated === null) return $current;
+
+    catalog_update(function () use ($updated) {
+        return [
+            'sources' => [
+                '2ch_boards' => array_values($updated['2ch_boards'] ?? []),
+                'vk_publics' => array_values($updated['vk_publics'] ?? []),
+                'telegram_channels' => array_values($updated['telegram_channels'] ?? []),
+            ],
+            'votes' => array_values($updated['source_votes'] ?? []),
+            'suggestions' => array_values($updated['source_suggestions'] ?? []),
+            'topics' => array_column($updated['topics'] ?? [], null, 'id'),
+            'kv' => [
+                'dvach_topic_boards' => $updated['dvach_topic_boards'] ?? [],
+                'discovery' => $updated['discovery'] ?? [],
+            ],
+        ];
+    });
+    return $updated;
 }
 
 /** Подходит ли источник теме: без topics — всем; $strict — только сама тема и синонимы, без связанных. */
